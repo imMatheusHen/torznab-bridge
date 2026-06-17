@@ -4,19 +4,19 @@ export const SOURCE_BETOR = 'betor';
 
 export const SOURCE_OPTIONS = [
   {
-    key: SOURCE_STREMIO,
-    label: 'Torrentio',
-    description: 'Consulta os streams do addon Torrentio/Torrentio Brazuca.',
-  },
-  {
     key: SOURCE_BETOR,
     label: 'BeTor',
-    description: 'Consulta o catalogo publico do BeTor e converte os itens para Torznab.',
+    description: 'Consulta o catálogo público do BeTor e converte os itens para Torznab.',
+  },
+  {
+    key: SOURCE_STREMIO,
+    label: 'Stremio',
+    description: 'Consulta os streams do addon Torrentio/Torrentio Brazuca.',
   },
   {
     key: SOURCE_DATABASE,
     label: 'Database',
-    description: 'Usa tabelas torrents/files compativeis com o schema do Torrentio.',
+    description: 'Usa tabelas torrents/files compatíveis com o schema do Torrentio.',
   },
 ];
 
@@ -56,28 +56,8 @@ export function normalizeSources(rawSources) {
   return dedupeSources(rawSources.split(','));
 }
 
-export function isDatabaseSourceEnabled(sources = getDefaultSources()) {
-  return sources.includes(SOURCE_DATABASE);
-}
-
-export function isStremioSourceEnabled(sources = getDefaultSources()) {
-  return sources.includes(SOURCE_STREMIO);
-}
-
-export function isBetorSourceEnabled(sources = getDefaultSources()) {
-  return sources.includes(SOURCE_BETOR);
-}
-
 export function isDatabaseSource() {
   return getSourceMode() === SOURCE_DATABASE;
-}
-
-export function isStremioSource() {
-  return getSourceMode() === SOURCE_STREMIO;
-}
-
-export function isBetorSource() {
-  return getSourceMode() === SOURCE_BETOR;
 }
 
 function dedupeSources(values) {

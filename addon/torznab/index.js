@@ -17,13 +17,25 @@ import {
   checkDatabaseHealth,
 } from './repository.js';
 import { checkStremioHealth, getStremioReleaseRowByGuid, searchStremioReleaseRows } from './stremio.js';
-import { checkBetorHealth, getBetorReleaseRowByGuid, searchBetorReleaseRows } from './betor.js';
+import {
+  checkBetorHealth,
+  getBetorReleaseRowByGuid,
+  isTemporaryBetorError,
+  searchBetorReleaseRows,
+} from './betor.js';
 import {
   getSourceMode,
   SOURCE_BETOR,
   SOURCE_DATABASE,
   SOURCE_STREMIO,
 } from './source.js';
+import {
+  buildStatusSnapshot,
+  recordConfigurationSaved,
+  recordSearchEvent,
+  recordSourceFailure,
+  recordSourceSuccess,
+} from './monitor.js';
 import { renderConfigurePage } from './configurePage.js';
 import { getRuntimeConfigPath, saveRuntimeConfig } from './runtimeConfig.js';
 
@@ -45,32 +57,26 @@ app.use((req, _, next) => {
 });
 
 app.get('/', renderProviderUi);
+app.get('/status', handleStatusRequest);
 
 app.get('/health', async (_, res) => {
-  const sources = getActiveSources();
-  const checks = await Promise.all(sources.map(checkSourceHealth));
-  const failingChecks = checks.filter(check => !check.ok);
-
-  if (!failingChecks.length) {
-    res.json({
-      ok: true,
-      service: 'torznab-bridge',
-      source: getSourceMode(),
-      sources,
-      configuration: process.env.TORZNAB_CONFIGURATION || 'brazuca',
-      checks,
-    });
-    return;
-  }
-
-  res.status(503).json({
-    ok: false,
+  const snapshot = await buildRuntimeStatus();
+  const response = {
+    ok: snapshot.ok,
+    degraded: snapshot.degraded,
     service: 'torznab-bridge',
     source: getSourceMode(),
-    sources,
-    error: 'one_or_more_sources_unreachable',
-    checks,
-  });
+    sources: getActiveSources(),
+    configuration: process.env.TORZNAB_CONFIGURATION || 'brazuca',
+    checks: snapshot.indexers.filter(indexer => indexer.enabled),
+    events: snapshot.events,
+  };
+
+  if (!snapshot.ok) {
+    response.error = 'all_enabled_indexers_unreachable';
+  }
+
+  res.status(snapshot.ok ? 200 : 503).json(response);
 });
 
 app.get('/download/:guid', async (req, res) => {
@@ -116,6 +122,7 @@ app.post('/configure', (req, res) => {
   const providers = normalizeProviderSelection(req.body?.providers);
   const sources = normalizeProviderSelection(req.body?.sources);
   saveRuntimeConfig({ providers, sources });
+  recordConfigurationSaved({ providers, sources });
   res.redirect(303, '/configure?saved=1');
 });
 
@@ -123,7 +130,7 @@ app.get('/api', handleApiRequest);
 app.get('/api/', handleApiRequest);
 
 const server = app.listen(PORT, BIND_ADDRESS, () => {
-  console.log(`Started Torrentio Torznab adapter at: ${PUBLIC_BASE_URL}`);
+  console.log(`Started Torznab Bridge at: ${PUBLIC_BASE_URL}`);
 });
 
 process.on('SIGTERM', shutdown);
@@ -152,11 +159,24 @@ async function handleApiRequest(req, res) {
     const rows = await searchReleaseRows(buildSearchOptions(action, req.query));
     const items = rows.map(row => toTorznabItem(row, baseUrl));
     const channelTitle = buildChannelTitle(action, req.query);
+    recordSearchEvent({ action, query: req.query, count: items.length });
     res.type('application/xml').send(buildRssXml(channelTitle, items));
   } catch (error) {
-    console.error('Torznab request failed', error);
+    console.error('Torznab Bridge request failed', error);
     res.status(500).type('application/xml').send(buildErrorXml(500, 'Internal adapter error'));
   }
+}
+
+async function handleStatusRequest(_, res) {
+  const snapshot = await buildRuntimeStatus();
+  res.json({
+    service: 'torznab-bridge',
+    ok: snapshot.ok,
+    degraded: snapshot.degraded,
+    sources: getActiveSources(),
+    indexers: snapshot.indexers,
+    events: snapshot.events,
+  });
 }
 
 async function shutdown() {
@@ -206,8 +226,15 @@ async function searchReleaseRows(options) {
   const limit = options.limit || 100;
   const sourceRows = await Promise.all(getActiveSources().map(async source => {
     try {
-      return await searchSourceRows(source, options);
+      const rows = await searchSourceRows(source, options);
+      recordSourceSuccess(source, {
+        kind: 'search',
+        message: `${getSourceLabel(source)} respondeu à busca normalmente.`,
+      });
+      return rows;
     } catch (error) {
+      const temporary = isTemporarySourceError(source, error);
+      recordSourceFailure(source, error, { kind: 'search', temporary });
       console.error(`Failed searching source ${source}`, error);
       return [];
     }
@@ -249,12 +276,12 @@ function normalizeTextQuery(action, query) {
 
 function buildChannelTitle(action, query) {
   if (action === 'tvsearch') {
-    return `Torrentio Torznab TV Search: ${query.q || query.imdbid || 'all'}`;
+    return `Torznab Bridge TV Search: ${query.q || query.imdbid || 'all'}`;
   }
   if (action === 'movie') {
-    return `Torrentio Torznab Movie Search: ${query.q || query.imdbid || 'all'}`;
+    return `Torznab Bridge Movie Search: ${query.q || query.imdbid || 'all'}`;
   }
-  return `Torrentio Torznab Search: ${query.q || query.imdbid || 'all'}`;
+  return `Torznab Bridge Search: ${query.q || query.imdbid || 'all'}`;
 }
 
 async function getReleaseByGuid(guid) {
@@ -342,9 +369,38 @@ async function checkSourceHealth(source) {
       await checkDatabaseHealth();
     }
 
+    recordSourceSuccess(source);
     return { source, ok: true };
   } catch (error) {
+    const temporary = isTemporarySourceError(source, error);
+    recordSourceFailure(source, error, { kind: 'health', temporary });
     console.error(`Health check failed for source ${source}`, error);
-    return { source, ok: false, error: error.message };
+    return { source, ok: false, error: error.message, temporary };
   }
+}
+
+async function buildRuntimeStatus() {
+  const sources = getActiveSources();
+  await Promise.all(sources.map(checkSourceHealth));
+  return buildStatusSnapshot(sources);
+}
+
+function isTemporarySourceError(source, error) {
+  if (source === SOURCE_BETOR) {
+    return isTemporaryBetorError(error);
+  }
+  return false;
+}
+
+function getSourceLabel(source) {
+  if (source === SOURCE_BETOR) {
+    return 'BeTor';
+  }
+  if (source === SOURCE_STREMIO) {
+    return 'Stremio';
+  }
+  if (source === SOURCE_DATABASE) {
+    return 'Database';
+  }
+  return source;
 }

@@ -113,10 +113,14 @@ export function parseReleaseGuid(rawGuid) {
 }
 
 export function buildMagnetUrl(row) {
-  if (row.magnetUrl) {
+  if (row.magnetUrl && !row.isSeasonPack) {
     return row.magnetUrl;
   }
-  return buildMagnetUrlFromParts(row.infoHash?.toLowerCase(), row.fileTitle || row.torrentTitle, row.trackers || '');
+  return buildMagnetUrlFromParts(
+      row.infoHash?.toLowerCase(),
+      row.torrentTitle || row.fileTitle,
+      row.trackers || '',
+  );
 }
 
 export function buildMagnetUrlFromParts(infoHash, title, rawTrackers) {
@@ -178,6 +182,10 @@ function buildCanonicalReleaseName(row, parsedTorrent, parsedFile) {
   const sourceName = row.fileTitle || row.torrentTitle || '';
   const dualMarker = /\b(dual|dual[ ._-]?audio|dublado|pt-br|portugu[eê]s)\b/i.test(sourceName) ? ' DUAL' : '';
 
+  if (row.isSeasonPack && Number.isInteger(row.imdbSeason)) {
+    return `${normalizedTitle} S${String(row.imdbSeason).padStart(2, '0')} COMPLETE${dualMarker}`.trim();
+  }
+
   if (Number.isInteger(row.imdbSeason) && Number.isInteger(row.imdbEpisode)) {
     return `${normalizedTitle} S${String(row.imdbSeason).padStart(2, '0')}E${String(row.imdbEpisode).padStart(2, '0')}${dualMarker}`.trim();
   }
@@ -229,8 +237,8 @@ function buildTorznabAttributes(row, categories, magnetUrl, parsedTorrent, parse
     ['imdbid', row.imdbId],
     ['imdb', row.imdbId?.replace(/^tt/i, '')],
     ['season', row.imdbSeason],
-    ['episode', row.imdbEpisode],
-    ['files', 1],
+    ['episode', row.isSeasonPack ? undefined : row.imdbEpisode],
+    ['files', row.packFileCount || 1],
   ];
 
   const codec = parsedFile.codec || parsedTorrent.codec;

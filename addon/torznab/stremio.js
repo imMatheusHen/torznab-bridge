@@ -96,7 +96,10 @@ export async function searchStremioReleaseRows(options = {}) {
       limit,
       canonicalTitle,
     });
-    return cacheRows(seasonRows.filter(row => matchesConfiguredLanguages(row)));
+    return cacheRows(collapseSeasonPackRows(
+        seasonRows.filter(row => matchesConfiguredLanguages(row)),
+        inferredSeason,
+    ));
   }
 
   if (!imdbId && !`${query || ''}`.trim()) {
@@ -291,12 +294,12 @@ async function fetchSeasonRows({ imdbId, season, limit, canonicalTitle }) {
 }
 
 async function fetchEpisodeFallbackRows({ imdbId, season, episode, limit, canonicalTitle }) {
-  const seasonRows = await fetchSeasonRows({
+  const seasonRows = collapseSeasonPackRows(await fetchSeasonRows({
     imdbId,
     season,
     limit: Math.max(limit * 3, limit),
     canonicalTitle,
-  });
+  }), season);
 
   const exactRows = seasonRows.filter(row => hasExplicitEpisodeMatch(row, season, episode));
   if (exactRows.length) {
@@ -401,6 +404,55 @@ function looksLikeSeasonPack(row, season) {
   ];
   const packMarkers = /\b(complete|pack|temporada|全集)\b/i;
   return seasonMarkers.some(pattern => pattern.test(blob)) && packMarkers.test(blob);
+}
+
+function collapseSeasonPackRows(rows, season) {
+  if (!Array.isArray(rows) || rows.length <= 1) {
+    return rows;
+  }
+
+  const groups = new Map();
+  for (const row of rows) {
+    const key = `${row.infoHash || ''}:${row.provider || ''}`;
+    const group = groups.get(key);
+    if (group) {
+      group.push(row);
+    } else {
+      groups.set(key, [row]);
+    }
+  }
+
+  const collapsedRows = [];
+  for (const group of groups.values()) {
+    const distinctEpisodes = new Set(group.map(row => row.imdbEpisode).filter(Number.isInteger));
+    const packDetected = distinctEpisodes.size > 1 || group.some(row => looksLikeSeasonPack(row, season));
+
+    if (!packDetected) {
+      collapsedRows.push(...group);
+      continue;
+    }
+
+    const representative = group
+        .slice()
+        .sort((left, right) => {
+          const leftEpisode = Number.isInteger(left.imdbEpisode) ? left.imdbEpisode : Number.MAX_SAFE_INTEGER;
+          const rightEpisode = Number.isInteger(right.imdbEpisode) ? right.imdbEpisode : Number.MAX_SAFE_INTEGER;
+          if (leftEpisode !== rightEpisode) {
+            return leftEpisode - rightEpisode;
+          }
+          return (left.fileIndex || 0) - (right.fileIndex || 0);
+        })[0];
+
+    collapsedRows.push({
+      ...representative,
+      fileTitle: representative.torrentTitle || representative.fileTitle,
+      imdbEpisode: undefined,
+      isSeasonPack: true,
+      packFileCount: Math.max(distinctEpisodes.size, group.length),
+    });
+  }
+
+  return collapsedRows;
 }
 
 function normalizeEpisodeHint(value) {

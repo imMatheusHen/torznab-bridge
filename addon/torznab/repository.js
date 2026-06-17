@@ -7,7 +7,7 @@ const MAX_LIMIT = 200;
 const DATABASE_URI = process.env.DATABASE_URI;
 
 if (isDatabaseSource() && !DATABASE_URI) {
-  throw new Error('DATABASE_URI is required for the Torrentio Torznab adapter');
+  throw new Error('DATABASE_URI is required for Torznab Bridge when the database indexer is enabled');
 }
 
 const pool = DATABASE_URI ? new Pool({

@@ -1,5 +1,3 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import axios from 'axios';
 import magnet from 'magnet-uri';
 import titleParser from 'parse-torrent-title';
@@ -9,12 +7,15 @@ import { SOURCE_BETOR } from './source.js';
 const BETOR_BASE_URL = (process.env.TORZNAB_BETOR_URL || 'https://catalogo.betor.top').replace(/\/$/, '');
 const BETOR_TIMEOUT = parseInt(process.env.TORZNAB_BETOR_TIMEOUT_MS || '20000', 10);
 const RELEASE_CACHE_TTL_MS = parseInt(process.env.TORZNAB_RELEASE_CACHE_TTL_MS || `${60 * 60 * 1000}`, 10);
-const execFileAsync = promisify(execFile);
 const BETOR_HEADERS = {
   'User-Agent': process.env.TORZNAB_BETOR_USER_AGENT || 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
   Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
 };
 const releaseCache = new Map();
+
+export function isTemporaryBetorError(error) {
+  return Boolean(error?.temporary && error?.source === SOURCE_BETOR);
+}
 
 export async function checkBetorHealth() {
   await fetchHtml('/');
@@ -65,26 +66,15 @@ async function fetchHtml(path) {
     });
     return response.data || '';
   } catch (error) {
-    if (error?.response?.status !== 521) {
-      throw error;
+    const statusCode = error?.response?.status;
+    if ((statusCode >= 500 && statusCode < 600) || statusCode === 429) {
+      throw createTemporaryBetorError(statusCode);
     }
+    if (!error?.response) {
+      throw createTemporaryBetorError(undefined, error?.code || 'network');
+    }
+    throw error;
   }
-
-  const { stdout } = await execFileAsync('curl', [
-    '-L',
-    '--fail',
-    '--silent',
-    '--show-error',
-    '--max-time',
-    `${Math.ceil(BETOR_TIMEOUT / 1000)}`,
-    '-A',
-    BETOR_HEADERS['User-Agent'],
-    url,
-  ], {
-    maxBuffer: 16 * 1024 * 1024,
-  });
-
-  return stdout || '';
 }
 
 function buildSearchPlan({ type, types, imdbId, query, season }) {
@@ -235,4 +225,15 @@ function pruneCache() {
 
 function cacheKey(infoHash, fileIndex) {
   return `${infoHash}:${fileIndex}`;
+}
+
+function createTemporaryBetorError(statusCode, code) {
+  const suffix = statusCode ? ` (${statusCode})` : '';
+  const error = new Error(`BeTor temporariamente indisponível${suffix}.`);
+  error.name = 'TemporaryIndexerUnavailableError';
+  error.source = SOURCE_BETOR;
+  error.temporary = true;
+  error.statusCode = statusCode;
+  error.code = code;
+  return error;
 }

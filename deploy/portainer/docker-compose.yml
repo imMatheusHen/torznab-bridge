@@ -1,6 +1,6 @@
 services:
   torznab-bridge:
-    image: torznab-bridge:latest
+    image: ghcr.io/immatheushen/torznab-bridge:latest
     container_name: torznab-bridge
     restart: unless-stopped
     ports:

@@ -1,8 +1,6 @@
 services:
   torznab-bridge:
-    build:
-      context: ../addon
-      dockerfile: Dockerfile.torznab
+    image: ghcr.io/immatheushen/torznab-bridge:latest
     container_name: torznab-bridge
     restart: unless-stopped
     ports:

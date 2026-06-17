@@ -1,14 +1,14 @@
 # Torznab Bridge Runtime
 
-Este diretorio contem o runtime atual do adapter/bridge Torznab.
+Este diretório contém o runtime atual do Torznab Bridge.
 
-## Modos de fonte
+## Modos de indexador
 
 - `TORZNAB_SOURCES=stremio,betor`
 - `TORZNAB_SOURCES=database`
 - fallback legado: `TORZNAB_SOURCE`
 
-## Variaveis principais
+## Variáveis principais
 
 - `TORZNAB_BASE_URL`
 - `TORZNAB_CONFIGURATION`
@@ -17,6 +17,13 @@ Este diretorio contem o runtime atual do adapter/bridge Torznab.
 - `TORZNAB_API_KEY`
 - `DATABASE_URI`
 
-## Observacao
+## Endpoints úteis
 
-O bridge adapta metadados de fontes configuradas; ele nao implementa scraping proprio de todos os trackers.
+- `/api?t=caps`
+- `/health`
+- `/status`
+- `/configure`
+
+## Observação
+
+O bridge adapta metadados de indexadores configurados; ele não implementa scraping próprio de todos os trackers.

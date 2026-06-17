@@ -1,15 +1,18 @@
 # Prowlarr
 
-Configure como `Generic Torznab`:
+Configure o bridge como `Generic Torznab`:
 
+- nome: `Torznab Bridge`
 - base URL: `http://192.168.1.100:9699`
 - API path: `/api`
 - API key: vazia ou a configurada em `TORZNAB_API_KEY`
 
-## BeTor
+## Observações sobre os indexadores
 
-O projeto inclui uma integracao nativa opcional com o BeTor. Isso evita depender da definicao Cardigann do Prowlarr em runtime, mas preserva a atribuicao ao projeto original BeTor.
+- o BeTor é integrado nativamente ao bridge e não precisa mais de definição Cardigann separada
+- falhas temporárias do BeTor, como `503` e `521`, passam a ser tratadas como indisponibilidade temporária
+- quando o BeTor falha, o bridge continua entregando resultados do Stremio ao Prowlarr
 
-URL publica do catalogo:
+## Catálogo público do BeTor
 
 - [catalogo.betor.top](https://catalogo.betor.top)

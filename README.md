@@ -1,52 +1,61 @@
 # Torznab Bridge
 
-`Torznab Bridge` converte metadados e links magnet de fontes configuradas para uma API compativel com Torznab.
+`Torznab Bridge` converte metadados e links magnet de fontes configuradas para uma API compatível com Torznab.
 
-O projeto nao faz scraping proprio do zero. Ele atua como adaptador entre fontes ja existentes, como:
+O projeto não faz scraping próprio do zero. Ele atua como adaptador entre fontes já existentes, como:
 
-- `Torrentio` via Stremio
+- `Stremio` com catálogo Torrentio/Torrentio Brazuca
 - `BeTor`
-- um banco compativel com o schema `torrents/files` do Torrentio
+- um banco compatível com o schema `torrents/files` do Torrentio
 
 ## Status
 
-- licenca raiz: `Apache-2.0`
-- atribuicoes de terceiros preservadas em [THIRD_PARTY_NOTICES.md](/home/matheus/torrentio-torznab-repo/THIRD_PARTY_NOTICES.md)
-- commit-base registrado do Torrentio: `TheBeastLT/torrentio-scraper@e99fedb`
+- licença raiz: `Apache-2.0`
+- avisos de terceiros preservados em [THIRD_PARTY_NOTICES.md](/home/matheus/torrentio-torznab-repo/THIRD_PARTY_NOTICES.md)
+- base upstream registrada: `TheBeastLT/torrentio-scraper@e99fedb`
+- imagem pública: `ghcr.io/immatheushen/torznab-bridge:latest`
 
 ## Como funciona
 
-1. O bridge consulta uma ou mais fontes habilitadas.
+1. O bridge consulta um ou mais indexadores habilitados.
 2. Normaliza os resultados em um modelo comum.
 3. Filtra os providers Torrentio configurados.
-4. Exponhe `/api` em formato Torznab para Prowlarr, Sonarr e Radarr.
+4. Expõe `/api` em formato Torznab para Prowlarr, Sonarr e Radarr.
 
-## Fontes suportadas
+## Indexadores suportados
 
-- `stremio`: consulta um addon Torrentio remoto ou local.
 - `betor`: consulta `catalogo.betor.top` e converte os itens publicados.
-- `database`: le um PostgreSQL com tabelas `torrents` e `files`.
+- `stremio`: consulta um addon Torrentio remoto ou local.
+- `database`: lê um PostgreSQL com tabelas `torrents` e `files`.
 
-## Inicio rapido
+## Recursos atuais
+
+- saúde separada por indexador em `/health` e `/status`
+- falhas temporárias do BeTor não derrubam o bridge nem bloqueiam resultados do Stremio
+- Web UI com status dos indexadores e histórico dos 10 eventos mais recentes
+- configuração persistida em `torznab-ui.json`
+
+## Início rápido
 
 ```bash
 cp .env.example .env
-docker compose up -d --build
+docker compose up -d
 ```
 
 Depois abra:
 
-- UI: `http://192.168.1.100:9699/`
+- Web UI: `http://192.168.1.100:9699/`
 - Caps: `http://192.168.1.100:9699/api?t=caps`
+- Status: `http://192.168.1.100:9699/status`
 
 ## Estrutura
 
-- [addon/torznab](/home/matheus/torrentio-torznab-repo/addon/torznab): codigo atual do bridge
-- [compose.yml](/home/matheus/torrentio-torznab-repo/compose.yml): stack Docker principal
-- [deploy](/home/matheus/torrentio-torznab-repo/deploy): artefatos de deploy por plataforma
-- [docs](/home/matheus/torrentio-torznab-repo/docs): instalacao e integracao
+- [addon/torznab](/home/matheus/torrentio-torznab-repo/addon/torznab): runtime principal do bridge
+- [compose.yml](/home/matheus/torrentio-torznab-repo/compose.yml): stack principal para Docker Compose
+- [deploy](/home/matheus/torrentio-torznab-repo/deploy): arquivos prontos para CasaOS, Portainer e Compose
+- [docs](/home/matheus/torrentio-torznab-repo/docs): instalação e integração
 
-## Documentacao
+## Documentação
 
 - [INSTALL_DOCKER.md](/home/matheus/torrentio-torznab-repo/docs/INSTALL_DOCKER.md)
 - [INSTALL_CASAOS.md](/home/matheus/torrentio-torznab-repo/docs/INSTALL_CASAOS.md)
@@ -55,4 +64,4 @@ Depois abra:
 
 ## Aviso legal
 
-Este projeto so adapta e reexpõe metadados de fontes configuradas pelo operador. O operador e responsavel por validar licencas, termos de uso e conformidade das fontes conectadas.
+Este projeto só adapta e reexpõe metadados de fontes configuradas pelo operador. O operador é responsável por validar licenças, termos de uso e conformidade das fontes conectadas.

@@ -1,7 +1,7 @@
 name: torznab-bridge
 services:
   torznab-bridge:
-    image: torznab-bridge:latest
+    image: ghcr.io/immatheushen/torznab-bridge:latest
     container_name: torznab-bridge
     environment:
       PORT: "9699"
@@ -32,27 +32,28 @@ services:
         - container: /config
           description:
             en_us: Persistent configuration directory.
-            pt_br: Diretorio persistente de configuracao.
+            pt_br: Diretório persistente de configuração.
       envs:
         - container: TORZNAB_BASE_URL
           description:
             en_us: Public base URL used in generated links.
-            pt_br: URL publica usada nos links gerados.
+            pt_br: URL pública usada nos links gerados.
         - container: TORZNAB_SOURCES
           description:
             en_us: Enabled sources, comma-separated.
-            pt_br: Fontes habilitadas, separadas por virgula.
+            pt_br: Indexadores habilitados, separados por vírgula.
 networks:
   default:
     name: torznab-bridge_default
 x-casaos:
   architectures:
     - amd64
+    - arm64
   author: Matheus / Codex
   category: Downloader
   description:
     en_us: Torznab metadata bridge with a simple source and provider picker UI.
-    pt_br: Bridge de metadados Torznab com UI simples para escolher fontes e providers.
+    pt_br: Bridge de metadados Torznab com UI simples para escolher indexadores e provedores.
   developer: Matheus
   icon: https://cdn.jsdelivr.net/gh/IceWhaleTech/CasaOS-AppStore@main/Apps/Prowlarr/icon.png
   index: /
@@ -61,8 +62,8 @@ x-casaos:
   port_map: "9699"
   store_app_id: torznab-bridge
   tagline:
-    en_us: Torznab bridge with BeTor and Torrentio support.
-    pt_br: Bridge Torznab com suporte a BeTor e Torrentio.
+    en_us: Torznab bridge with BeTor and Stremio support.
+    pt_br: Bridge Torznab com suporte a BeTor e Stremio.
   title:
     en_us: Torznab Bridge
     pt_br: Torznab Bridge

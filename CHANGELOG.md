@@ -3,7 +3,7 @@
 ## Unreleased
 
 - publica a base como `Torznab Bridge`
-- adiciona fonte opcional `BeTor` com toggle na Web UI
-- sanitiza exemplos publicos e remove referencias a ambiente interno
-- registra o commit-base `TheBeastLT/torrentio-scraper@e99fedb`
-- alinha o pacote Node local com a licenca `Apache-2.0`
+- adiciona a seção `Indexadores` na Web UI com status por indexador e histórico recente
+- trata falhas temporárias do BeTor sem derrubar o serviço inteiro
+- substitui dependências `git://` por URLs HTTPS fixadas
+- prepara publicação automática da imagem Docker no GHCR em `amd64` e `arm64`

@@ -4,7 +4,7 @@ export function buildCapsXml(baseUrl) {
   const sanitizedBaseUrl = baseUrl.replace(/\/$/, '');
   return `${XML_DECLARATION}
 <caps>
-  <server title="Torrentio Torznab" version="1.0" url="${escapeXml(sanitizedBaseUrl)}" />
+  <server title="Torznab Bridge" version="1.0" url="${escapeXml(sanitizedBaseUrl)}" />
   <limits max="200" default="100" />
   <registration available="no" open="no" />
   <searching>

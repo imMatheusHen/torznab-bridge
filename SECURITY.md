@@ -2,19 +2,19 @@
 
 ## Reporting
 
-Nao publique segredos, IPs internos, API keys ou dumps operacionais em issues publicas.
+Não publique segredos, IPs internos, API keys ou dumps operacionais em issues públicas.
 
 Ao reportar uma vulnerabilidade:
 
 1. descreva o impacto
-2. detalhe como reproduzir sem dados sensiveis
-3. mascare enderecos, tokens e credenciais
+2. detalhe como reproduzir sem dados sensíveis
+3. mascare endereços, tokens e credenciais
 
 ## Scope
 
-Este projeto processa configuracoes locais e pode encaminhar buscas para fontes externas configuradas pelo operador. Revise com cuidado:
+Este projeto processa configurações locais e pode encaminhar buscas para fontes externas configuradas pelo operador. Revise com cuidado:
 
-- variaveis de ambiente
+- variáveis de ambiente
 - arquivos `.env`
 - logs de proxy reverso
-- historicos do git antes de publicar forks
+- históricos do Git antes de publicar forks

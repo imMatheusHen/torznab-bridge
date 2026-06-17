@@ -1,5 +1,6 @@
 services:
   torznab-bridge:
+    image: ghcr.io/immatheushen/torznab-bridge:latest
     build:
       context: ./addon
       dockerfile: Dockerfile.torznab
