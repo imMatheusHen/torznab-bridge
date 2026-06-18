@@ -13,7 +13,7 @@ docker compose up -d
 ## Variáveis mais importantes
 
 - `TORZNAB_BASE_URL=http://192.168.1.100:9699`
-- `TORZNAB_SOURCES=stremio,betor`
+- `TORZNAB_SOURCES=betor,stremio`
 - `TORZNAB_STREMIO_URL=https://torrentio.strem.fun/brazuca`
 - `TORZNAB_BETOR_URL=https://catalogo.betor.top`
 - `TORZNAB_RUNTIME_CONFIG_PATH=/config/torznab-ui.json`

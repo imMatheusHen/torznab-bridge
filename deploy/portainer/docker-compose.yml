@@ -7,7 +7,7 @@ services:
       - "9699:9699"
     environment:
       PORT: "9699"
-      TORZNAB_SOURCES: stremio,betor
+      TORZNAB_SOURCES: betor,stremio
       TORZNAB_STREMIO_URL: https://torrentio.strem.fun/brazuca
       TORZNAB_BETOR_URL: https://catalogo.betor.top
       TORZNAB_BASE_URL: http://192.168.1.100:9699

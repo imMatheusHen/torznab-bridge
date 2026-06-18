@@ -14,7 +14,7 @@ Use o arquivo [deploy/casaos/docker-compose.yml](/home/matheus/torrentio-torznab
 
 ## Recomendações
 
-- mantenha `TORZNAB_SOURCES=stremio,betor`
+- mantenha `TORZNAB_SOURCES=betor,stremio`
 - use um diretório persistente, por exemplo `/DATA/AppData/torznab-bridge/config`
 - confirme que a URL pública aponta para o IP e porta reais do servidor
 

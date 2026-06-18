@@ -19,6 +19,7 @@ import {
 import { checkStremioHealth, getStremioReleaseRowByGuid, searchStremioReleaseRows } from './stremio.js';
 import {
   checkBetorHealth,
+  getBetorRuntimeStatus,
   getBetorReleaseRowByGuid,
   isTemporaryBetorError,
   searchBetorReleaseRows,
@@ -44,6 +45,7 @@ const BIND_ADDRESS = process.env.TORZNAB_BIND_ADDRESS || '0.0.0.0';
 const PUBLIC_BASE_URL = process.env.TORZNAB_BASE_URL || `http://localhost:${PORT}`;
 const API_KEY = process.env.TORZNAB_API_KEY;
 const LOG_REQUESTS = process.env.TORZNAB_LOG_REQUESTS === '1';
+const BETOR_FALLBACK_DELAY_MS = parseInt(process.env.TORZNAB_BETOR_FALLBACK_DELAY_MS || '2500', 10);
 
 const app = express();
 app.disable('x-powered-by');
@@ -70,6 +72,7 @@ app.get('/health', async (_, res) => {
     configuration: process.env.TORZNAB_CONFIGURATION || 'brazuca',
     checks: snapshot.indexers.filter(indexer => indexer.enabled),
     events: snapshot.events,
+    betor: snapshot.betor,
   };
 
   if (!snapshot.ok) {
@@ -176,6 +179,7 @@ async function handleStatusRequest(_, res) {
     sources: getActiveSources(),
     indexers: snapshot.indexers,
     events: snapshot.events,
+    betor: snapshot.betor,
   });
 }
 
@@ -224,36 +228,24 @@ function buildSearchOptions(action, query) {
 
 async function searchReleaseRows(options) {
   const limit = options.limit || 100;
-  const sourceRows = await Promise.all(getActiveSources().map(async source => {
-    try {
-      const rows = await searchSourceRows(source, options);
-      recordSourceSuccess(source, {
-        kind: 'search',
-        message: `${getSourceLabel(source)} respondeu à busca normalmente.`,
-      });
-      return rows;
-    } catch (error) {
-      const temporary = isTemporarySourceError(source, error);
-      recordSourceFailure(source, error, { kind: 'search', temporary });
-      console.error(`Failed searching source ${source}`, error);
-      return [];
-    }
-  }));
+  const activeSources = getActiveSources();
+  const orderedSources = buildEffectiveSourceOrder(activeSources);
+  const resultsBySource = new Map();
 
-  const mergedRows = [];
-  const seenKeys = new Set();
-  for (const row of sourceRows.flat()) {
-    const dedupeKey = `${row.infoHash}:${row.fileIndex || 0}`;
-    if (seenKeys.has(dedupeKey)) {
-      continue;
-    }
-    seenKeys.add(dedupeKey);
-    mergedRows.push(row);
-    if (mergedRows.length >= limit) {
-      break;
-    }
+  if (orderedSources.includes(SOURCE_BETOR)) {
+    const betorRows = await searchWithBetorPrimary(options, orderedSources, resultsBySource);
+    resultsBySource.set(SOURCE_BETOR, betorRows);
   }
-  return mergedRows;
+
+  const remainingSources = orderedSources.filter(source => !resultsBySource.has(source));
+  if (remainingSources.length) {
+    const sourceRows = await Promise.all(remainingSources.map(source => searchSourceRowsSafely(source, options)));
+    sourceRows.forEach((rows, index) => {
+      resultsBySource.set(remainingSources[index], rows);
+    });
+  }
+
+  return mergeRowsInSourceOrder(orderedSources, resultsBySource, limit);
 }
 
 function normalizeTextQuery(action, query) {
@@ -382,7 +374,10 @@ async function checkSourceHealth(source) {
 async function buildRuntimeStatus() {
   const sources = getActiveSources();
   await Promise.all(sources.map(checkSourceHealth));
-  return buildStatusSnapshot(sources);
+  return {
+    ...buildStatusSnapshot(sources),
+    betor: getBetorRuntimeStatus(),
+  };
 }
 
 function isTemporarySourceError(source, error) {
@@ -403,4 +398,109 @@ function getSourceLabel(source) {
     return 'Database';
   }
   return source;
+}
+
+async function searchWithBetorPrimary(options, orderedSources, resultsBySource) {
+  const stremioEnabled = orderedSources.includes(SOURCE_STREMIO);
+  let fallbackStarted = false;
+  let stremioPromise;
+  let fallbackReason;
+  let fallbackTimer;
+  let betorError;
+
+  const startStremioFallback = reason => {
+    if (!stremioEnabled || fallbackStarted) {
+      return;
+    }
+    fallbackStarted = true;
+    fallbackReason = reason;
+    console.log(`[search:fallback] Iniciando fallback do Stremio: ${reason}.`);
+    stremioPromise = searchSourceRowsSafely(SOURCE_STREMIO, options);
+  };
+
+  if (stremioEnabled) {
+    fallbackTimer = setTimeout(() => {
+      startStremioFallback('betor_slow');
+    }, BETOR_FALLBACK_DELAY_MS);
+  }
+
+  let betorRows = [];
+  try {
+    betorRows = await searchSourceRowsSafely(SOURCE_BETOR, options);
+  } catch (error) {
+    betorError = error;
+    startStremioFallback('betor_failed');
+  } finally {
+    clearTimeout(fallbackTimer);
+  }
+
+  if (fallbackStarted && stremioPromise) {
+    resultsBySource.set(SOURCE_STREMIO, await stremioPromise);
+    console.log(`[search:fallback] Fallback do Stremio concluido para ${fallbackReason}.`);
+  }
+
+  if (betorError) {
+    if (fallbackStarted) {
+      return [];
+    }
+    throw betorError;
+  }
+
+  return betorRows;
+}
+
+async function searchSourceRowsSafely(source, options) {
+  const startedAt = Date.now();
+  try {
+    const rows = await searchSourceRows(source, options);
+    recordSourceSuccess(source, {
+      kind: 'search',
+      message: `${getSourceLabel(source)} respondeu à busca normalmente.`,
+    });
+    console.log(`[search:${source}] Busca concluida em ${Date.now() - startedAt}ms com ${rows.length} resultado(s).`);
+    return rows;
+  } catch (error) {
+    const temporary = isTemporarySourceError(source, error);
+    recordSourceFailure(source, error, { kind: 'search', temporary });
+    console.error(`Failed searching source ${source}`, error);
+    throw error;
+  }
+}
+
+function mergeRowsInSourceOrder(orderedSources, resultsBySource, limit) {
+  const mergedRows = [];
+  const seenKeys = new Set();
+
+  for (const source of orderedSources) {
+    const rows = resultsBySource.get(source) || [];
+    for (const row of rows) {
+      const dedupeKey = `${row.infoHash}:${row.fileIndex || 0}`;
+      if (seenKeys.has(dedupeKey)) {
+        continue;
+      }
+      seenKeys.add(dedupeKey);
+      mergedRows.push(row);
+      if (mergedRows.length >= limit) {
+        return mergedRows;
+      }
+    }
+  }
+
+  return mergedRows;
+}
+
+function buildEffectiveSourceOrder(activeSources) {
+  const orderedSources = [];
+  if (activeSources.includes(SOURCE_BETOR)) {
+    orderedSources.push(SOURCE_BETOR);
+  }
+  if (activeSources.includes(SOURCE_STREMIO)) {
+    orderedSources.push(SOURCE_STREMIO);
+  }
+  activeSources.forEach(source => {
+    if (!orderedSources.includes(source)) {
+      orderedSources.push(source);
+    }
+  });
+  return orderedSources;
 }

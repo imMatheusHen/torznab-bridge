@@ -9,7 +9,7 @@ services:
       PORT: "9699"
       DATABASE_URI: "${DATABASE_URI:-}"
       TORZNAB_SOURCE: "${TORZNAB_SOURCE:-}"
-      TORZNAB_SOURCES: "${TORZNAB_SOURCES:-stremio,betor}"
+      TORZNAB_SOURCES: "${TORZNAB_SOURCES:-betor,stremio}"
       TORZNAB_CONFIGURATION: "${TORZNAB_CONFIGURATION:-brazuca}"
       TORZNAB_STREMIO_URL: "${TORZNAB_STREMIO_URL:-https://torrentio.strem.fun/brazuca}"
       TORZNAB_BETOR_URL: "${TORZNAB_BETOR_URL:-https://catalogo.betor.top}"
