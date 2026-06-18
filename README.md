@@ -1,12 +1,16 @@
 # Torznab Bridge
 
-O **Torznab Bridge** transforma resultados de fontes compatíveis em uma API Torznab que pode ser adicionada ao **Prowlarr**, **Sonarr** e **Radarr**.
+O **Torznab Bridge** transforma metadados e links magnet em uma API Torznab que pode ser adicionada ao **Prowlarr**, **Sonarr** e **Radarr**.
+O projeto não faz scraping proprio do zero. Ele atua como adaptador entre fontes já existentes, como:
+
+- `stremio`: consulta um addon Torrentio.
+- `betor`: consulta `catalogo.betor.top` e converte os itens publicados.
 
 A configuração é feita por uma Web UI simples, onde você escolhe os **indexadores** e os **providers** que deseja utilizar.
 
 ## Instalação
 
-Escolha apenas uma das opções abaixo:
+Escolha uma das opções abaixo:
 
 ### CasaOS
 
@@ -14,7 +18,7 @@ Escolha apenas uma das opções abaixo:
 2. Clique no botão `+`.
 3. Clique em `Adicionar um aplicativo personalizado`.
 4. Selecione `Importar`.
-5. Cole o conteúdo de [deploy/casaos/docker-compose.yml](/home/matheus/torrentio-torznab-repo/deploy/casaos/docker-compose.yml).
+5. Cole o conteúdo de [docker-compose.yml](/deploy/casaos/docker-compose.yml).
 6. Clique em `Instalar`.
 
 ### Portainer
@@ -23,17 +27,8 @@ Escolha apenas uma das opções abaixo:
 2. Acesse `Stacks`.
 3. Clique em `Add stack`.
 4. Use o nome `torznab-bridge`.
-5. Cole o conteúdo de [deploy/portainer/docker-compose.yml](/home/matheus/torrentio-torznab-repo/deploy/portainer/docker-compose.yml).
+5. Cole o conteúdo de [docker-compose.yml](/deploy/portainer/docker-compose.yml).
 6. Clique em `Deploy the stack`.
-
-### Docker Compose
-
-```bash
-cd /home/matheus/torrentio-torznab-repo
-cp .env.example .env
-docker compose pull
-docker compose up -d
-```
 
 ## Configuração inicial
 
@@ -59,14 +54,6 @@ docker compose up -d
 
 6. Clique em `Save`.
 
-## O que melhorou nesta versão
-
-- o status do **Stremio** e do **BeTor** é monitorado separadamente
-- falhas temporárias do **BeTor** não derrubam o serviço inteiro
-- o bridge continua entregando resultados do **Stremio** mesmo com BeTor indisponível
-- a Web UI agora mostra o estado de cada indexador e os 10 eventos mais recentes
-- a imagem Docker passa a ser publicada no **GHCR**
-
 ## Aviso legal
 
 Este projeto apenas adapta e reexpõe metadados fornecidos pelas fontes configuradas pelo usuário.
@@ -77,5 +64,5 @@ Este projeto não hospeda arquivos, não armazena conteúdos protegidos e não c
 
 Consulte também:
 
-- [Licença do projeto](/home/matheus/torrentio-torznab-repo/LICENSE)
-- [Avisos e atribuições de terceiros](/home/matheus/torrentio-torznab-repo/THIRD_PARTY_NOTICES.md)
+- [Licença do projeto](/LICENSE)
+- [Avisos e atribuições de terceiros](/THIRD_PARTY_NOTICES.md)
