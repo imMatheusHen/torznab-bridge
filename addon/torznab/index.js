@@ -1,6 +1,7 @@
 import express from 'express';
 import { buildCapsXml, buildErrorXml, buildRssXml } from './xml.js';
 import {
+  buildReleaseGuid,
   buildMagnetUrl,
   parseReleaseGuid,
   getAdapterConfiguration,
@@ -47,6 +48,8 @@ const PUBLIC_BASE_URL = process.env.TORZNAB_BASE_URL || `http://localhost:${PORT
 const API_KEY = process.env.TORZNAB_API_KEY;
 const LOG_REQUESTS = process.env.TORZNAB_LOG_REQUESTS === '1';
 const BETOR_FALLBACK_DELAY_MS = parseInt(process.env.TORZNAB_BETOR_FALLBACK_DELAY_MS || '2500', 10);
+const DELIVERED_RELEASE_TTL_MS = parseInt(process.env.TORZNAB_RELEASE_CACHE_TTL_MS || `${60 * 60 * 1000}`, 10);
+const deliveredReleaseCache = new Map();
 
 const app = express();
 app.disable('x-powered-by');
@@ -161,6 +164,7 @@ async function handleApiRequest(req, res) {
     }
 
     const rows = await searchReleaseRows(buildSearchOptions(action, req.query));
+    cacheDeliveredRows(rows);
     const items = rows.map(row => toTorznabItem(row, baseUrl));
     const channelTitle = buildChannelTitle(action, req.query);
     recordSearchEvent({
@@ -294,6 +298,10 @@ function buildChannelTitle(action, query) {
 
 async function getReleaseByGuid(guid) {
   const parsedGuid = parseReleaseGuid(guid);
+  const deliveredRow = getDeliveredRelease(parsedGuid);
+  if (deliveredRow) {
+    return deliveredRow;
+  }
   const row = await getReleaseBySourceGuid(parsedGuid);
   const allowedProviders = buildAllowedProviderSet(getAdapterConfiguration().providers);
   if (!row) {
@@ -306,6 +314,34 @@ async function getReleaseByGuid(guid) {
     return undefined;
   }
   return row;
+}
+
+function cacheDeliveredRows(rows) {
+  pruneDeliveredReleaseCache();
+  const expiresAt = Date.now() + DELIVERED_RELEASE_TTL_MS;
+  rows.forEach(row => {
+    const guid = buildReleaseGuid(row._source, row.infoHash?.toLowerCase(), row.fileIndex || 0);
+    deliveredReleaseCache.set(guid, { row, expiresAt });
+  });
+}
+
+function getDeliveredRelease(parsedGuid) {
+  pruneDeliveredReleaseCache();
+  const guid = buildReleaseGuid(
+      parsedGuid.source,
+      parsedGuid.infoHash?.toLowerCase(),
+      parsedGuid.fileIndex,
+  );
+  return deliveredReleaseCache.get(guid)?.row;
+}
+
+function pruneDeliveredReleaseCache() {
+  const now = Date.now();
+  for (const [guid, entry] of deliveredReleaseCache.entries()) {
+    if (entry.expiresAt <= now) {
+      deliveredReleaseCache.delete(guid);
+    }
+  }
 }
 
 async function getDatabaseReleaseByGuid(guid) {
