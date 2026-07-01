@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "start:torznab": "node torznab/index.js"
+    "start:torznab": "node torznab/index.js",
+    "test:torznab": "node --test torznab/*.test.js"
   },
   "author": "TheBeastLT <pauliox@beyond.lt>",
   "license": "Apache-2.0",

@@ -22,6 +22,8 @@ const BETOR_HEADERS = {
 const releaseCache = new Map();
 const searchCache = new Map();
 const inflightSearches = new Map();
+const pageCache = new Map();
+const inflightPages = new Map();
 const circuitBreaker = {
   state: 'closed',
   consecutiveFailures: 0,
@@ -56,8 +58,10 @@ export function getBetorRuntimeStatus() {
       searchEntries: searchCache.size,
       freshSearchEntries: freshCacheEntries,
       staleSearchEntries: staleCacheEntries,
+      pageEntries: pageCache.size,
       releaseEntries: releaseCache.size,
       inflightGroupedSearches: inflightSearches.size,
+      inflightPageRequests: inflightPages.size,
     },
   };
 }
@@ -74,6 +78,12 @@ export async function searchBetorReleaseRows(options = {}) {
   pruneCaches();
   const searchKey = buildSearchCacheKey(options);
   const cachedEntry = getCachedSearchEntry(searchKey);
+  if (cachedEntry?.freshRows !== undefined) {
+    logBetor('cache', `Respondendo busca ${searchKey} pelo cache fresco.`);
+    cacheRows(cachedEntry.freshRows);
+    return cachedEntry.freshRows;
+  }
+
   const inflightSearch = inflightSearches.get(searchKey);
   if (inflightSearch) {
     logBetor('group', `Agrupando busca identica em andamento para ${searchKey}.`);
@@ -177,6 +187,42 @@ async function performBetorSearch(searchKey, options) {
 }
 
 async function fetchHtmlWithRetry({ path, logKey, skipCacheFallback = false }) {
+  if (skipCacheFallback) {
+    return fetchHtmlFromNetwork({ path, logKey });
+  }
+
+  const cachedEntry = getCachedPageEntry(path);
+  if (cachedEntry?.freshHtml !== undefined) {
+    logBetor('cache', `Reutilizando pagina fresca ${path}.`);
+    return cachedEntry.freshHtml;
+  }
+
+  const inflightPage = inflightPages.get(path);
+  if (inflightPage) {
+    logBetor('group', `Agrupando consulta da pagina ${path}.`);
+    return inflightPage;
+  }
+
+  const pagePromise = fetchHtmlFromNetwork({ path, logKey })
+      .then(html => {
+        cachePageResult(path, html);
+        return html;
+      })
+      .catch(error => {
+        if (cachedEntry?.staleHtml !== undefined) {
+          logBetor('cache', `Usando pagina antiga ${path} apos falha do BeTor.`);
+          return cachedEntry.staleHtml;
+        }
+        throw error;
+      })
+      .finally(() => {
+        inflightPages.delete(path);
+      });
+  inflightPages.set(path, pagePromise);
+  return pagePromise;
+}
+
+async function fetchHtmlFromNetwork({ path, logKey }) {
   const url = `${BETOR_BASE_URL}${path}`;
   let lastError;
 
@@ -209,11 +255,9 @@ async function fetchHtmlWithRetry({ path, logKey, skipCacheFallback = false }) {
     }
   }
 
-  if (!skipCacheFallback) {
-    logBetor('retry', `Falha definitiva em ${logKey} apos retries esgotados.`, {
-      error: lastError?.message,
-    });
-  }
+  logBetor('retry', `Falha definitiva em ${logKey} apos retries esgotados.`, {
+    error: lastError?.message,
+  });
 
   throw lastError || createTemporaryBetorError(undefined, 'retry_exhausted');
 }
@@ -270,7 +314,7 @@ function parseReleaseRows(html, context = {}) {
     const fileTitle = files[0] || torrentTitle;
     const parsed = titleParser.parse(fileTitle || torrentTitle);
     const itemType = node.attr('data-item-type') === 'movie' ? 'movie' : 'series';
-    const providerName = node.closest('.provider').find('.header .name').first().text().trim() || 'BeTor';
+    const providerName = node.find('.top > .provider').first().text().trim() || 'BeTor';
     const imdbSeason = parseInt(`${context.season ?? parsed.season ?? ''}`, 10);
     const imdbEpisode = inferEpisode(parsed, torrentTitle, fileTitle);
 
@@ -382,6 +426,28 @@ function getCachedSearchEntry(searchKey) {
   };
 }
 
+function cachePageResult(path, html) {
+  const now = Date.now();
+  pageCache.set(path, {
+    html,
+    expiresAt: now + BETOR_SEARCH_CACHE_TTL_MS,
+    staleUntil: now + BETOR_SEARCH_CACHE_STALE_MS,
+  });
+}
+
+function getCachedPageEntry(path) {
+  const entry = pageCache.get(path);
+  if (!entry) {
+    return undefined;
+  }
+
+  const now = Date.now();
+  return {
+    freshHtml: entry.expiresAt > now ? entry.html : undefined,
+    staleHtml: entry.staleUntil > now ? entry.html : undefined,
+  };
+}
+
 function cacheRows(rows) {
   pruneCaches();
   const expiresAt = Date.now() + RELEASE_CACHE_TTL_MS;
@@ -403,6 +469,12 @@ function pruneCaches() {
   for (const [key, value] of searchCache.entries()) {
     if (value.staleUntil <= now) {
       searchCache.delete(key);
+    }
+  }
+
+  for (const [key, value] of pageCache.entries()) {
+    if (value.staleUntil <= now) {
+      pageCache.delete(key);
     }
   }
 }

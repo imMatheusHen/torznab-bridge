@@ -325,6 +325,23 @@ export function renderConfigurePage({
       border: 1px dashed rgba(255, 255, 255, 0.12);
       color: var(--muted);
     }
+    .event-requester {
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 0.84rem;
+      word-break: break-word;
+    }
+    .event-releases {
+      margin-top: 9px;
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+    .event-releases summary { cursor: pointer; }
+    .event-releases ol {
+      margin: 8px 0 0;
+      padding-left: 22px;
+    }
+    .event-releases li { margin: 5px 0; }
     @media (max-width: 900px) {
       .layout, .hero-grid {
         grid-template-columns: 1fr;
@@ -411,9 +428,9 @@ export function renderConfigurePage({
         <div class="toolbar">
           <div>
             <h2>Últimos eventos</h2>
-            <p class="section-copy">As 10 ocorrências mais recentes de buscas, falhas e recuperações.</p>
+            <p class="section-copy">As 30 ocorrências mais recentes, incluindo cliente, falhas e torrents entregues.</p>
           </div>
-          <button class="btn-secondary" type="button" id="refresh-status">Atualizar agora</button>
+          <button class="btn-secondary" type="button" id="refresh-status">Testar indexadores</button>
         </div>
         <div class="events" id="events">
           <div class="event-empty">Aguardando os primeiros eventos do bridge.</div>
@@ -494,19 +511,34 @@ export function renderConfigurePage({
         const timestamp = new Date(event.timestamp || Date.now()).toLocaleString('pt-BR');
         const levelClass = event.level ? 'event-level-' + event.level : '';
         const source = event.source ? ' · ' + escapeHtml(event.source) : '';
+        const requester = event.requester?.label
+          ? '<div class="event-requester">Cliente: ' + escapeHtml(event.requester.label) +
+            ' · ' + escapeHtml(event.requester.userAgent || '') + '</div>'
+          : '';
+        const releases = Array.isArray(event.releases) ? event.releases : [];
+        const releaseList = releases.length
+          ? '<details class="event-releases"><summary>' + releases.length + ' torrent(s)</summary><ol>' +
+            releases.map(release => '<li>' + escapeHtml(release.title || 'Sem título') +
+              ' · ' + escapeHtml(release.source || 'fonte desconhecida') +
+              ' · ' + escapeHtml(release.provider || 'provider desconhecido') +
+              (release.infoHash ? ' · ' + escapeHtml(release.infoHash) : '') + '</li>').join('') +
+            '</ol></details>'
+          : '';
         return '<article class="event ' + levelClass + '">' +
           '<div class="event-head">' +
             '<span class="event-kind">' + escapeHtml(event.kind || 'evento') + source + '</span>' +
             '<span class="muted">' + escapeHtml(timestamp) + '</span>' +
           '</div>' +
           '<p>' + escapeHtml(event.message || 'Sem mensagem') + '</p>' +
+          requester +
+          releaseList +
         '</article>';
       }).join('');
     }
 
-    async function refreshStatus() {
+    async function refreshStatus(probe = false) {
       try {
-        const response = await fetch('/status', { cache: 'no-store' });
+        const response = await fetch(probe ? '/status?probe=1' : '/status', { cache: 'no-store' });
         if (!response.ok) {
           throw new Error('Falha ao buscar o status.');
         }
@@ -532,7 +564,7 @@ export function renderConfigurePage({
       syncSelections();
     });
 
-    document.getElementById('refresh-status')?.addEventListener('click', refreshStatus);
+    document.getElementById('refresh-status')?.addEventListener('click', () => refreshStatus(true));
 
     for (const checkbox of [...providerCheckboxes, ...sourceCheckboxes]) {
       checkbox.addEventListener('change', syncSelections);
@@ -540,7 +572,7 @@ export function renderConfigurePage({
 
     syncSelections();
     refreshStatus();
-    window.setInterval(refreshStatus, 30000);
+    window.setInterval(() => refreshStatus(false), 30000);
   </script>
 </body>
 </html>`;

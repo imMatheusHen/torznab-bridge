@@ -33,6 +33,7 @@ import {
 import {
   buildStatusSnapshot,
   recordConfigurationSaved,
+  recordDownloadEvent,
   recordSearchEvent,
   recordSourceFailure,
   recordSourceSuccess,
@@ -64,8 +65,9 @@ app.get('/status', handleStatusRequest);
 app.get('/health', async (_, res) => {
   const snapshot = await buildRuntimeStatus();
   const response = {
-    ok: snapshot.ok,
-    degraded: snapshot.degraded,
+    ok: true,
+    dependenciesOk: snapshot.ok,
+    degraded: snapshot.degraded || !snapshot.ok,
     service: 'torznab-bridge',
     source: getSourceMode(),
     sources: getActiveSources(),
@@ -75,11 +77,7 @@ app.get('/health', async (_, res) => {
     betor: snapshot.betor,
   };
 
-  if (!snapshot.ok) {
-    response.error = 'all_enabled_indexers_unreachable';
-  }
-
-  res.status(snapshot.ok ? 200 : 503).json(response);
+  res.json(response);
 });
 
 app.get('/download/:guid', async (req, res) => {
@@ -88,6 +86,9 @@ app.get('/download/:guid', async (req, res) => {
     if (!row) {
       res.status(404).send('Release not found');
       return;
+    }
+    if (req.method === 'GET') {
+      recordDownloadEvent({ row, requester: buildRequester(req) });
     }
     res.redirect(302, buildMagnetUrl(row));
   } catch (error) {
@@ -162,7 +163,13 @@ async function handleApiRequest(req, res) {
     const rows = await searchReleaseRows(buildSearchOptions(action, req.query));
     const items = rows.map(row => toTorznabItem(row, baseUrl));
     const channelTitle = buildChannelTitle(action, req.query);
-    recordSearchEvent({ action, query: req.query, count: items.length });
+    recordSearchEvent({
+      action,
+      query: req.query,
+      count: items.length,
+      requester: buildRequester(req),
+      releases: rows,
+    });
     res.type('application/xml').send(buildRssXml(channelTitle, items));
   } catch (error) {
     console.error('Torznab Bridge request failed', error);
@@ -170,8 +177,8 @@ async function handleApiRequest(req, res) {
   }
 }
 
-async function handleStatusRequest(_, res) {
-  const snapshot = await buildRuntimeStatus();
+async function handleStatusRequest(req, res) {
+  const snapshot = await buildRuntimeStatus({ probeSources: req.query.probe === '1' });
   res.json({
     service: 'torznab-bridge',
     ok: snapshot.ok,
@@ -204,6 +211,14 @@ function getRequestBaseUrl(req) {
   return `${req.protocol}://${req.get('host')}`;
 }
 
+function buildRequester(req) {
+  const forwardedFor = `${req.get('x-forwarded-for') || ''}`.split(',')[0].trim();
+  return {
+    ip: forwardedFor || req.get('x-real-ip') || req.ip || req.socket?.remoteAddress,
+    userAgent: req.get('user-agent'),
+  };
+}
+
 function buildSearchOptions(action, query) {
   const adapterConfig = getAdapterConfiguration();
   const providers = (adapterConfig.providers || []).map(provider => provider.toLowerCase());
@@ -230,6 +245,7 @@ async function searchReleaseRows(options) {
   const limit = options.limit || 100;
   const activeSources = getActiveSources();
   const orderedSources = buildEffectiveSourceOrder(activeSources);
+  const allowedProviders = buildAllowedProviderSet(options.providers);
   const resultsBySource = new Map();
 
   if (orderedSources.includes(SOURCE_BETOR)) {
@@ -245,7 +261,7 @@ async function searchReleaseRows(options) {
     });
   }
 
-  return mergeRowsInSourceOrder(orderedSources, resultsBySource, limit);
+  return mergeRowsInSourceOrder(orderedSources, resultsBySource, limit, allowedProviders);
 }
 
 function normalizeTextQuery(action, query) {
@@ -279,11 +295,14 @@ function buildChannelTitle(action, query) {
 async function getReleaseByGuid(guid) {
   const parsedGuid = parseReleaseGuid(guid);
   const row = await getReleaseBySourceGuid(parsedGuid);
-  const allowedProviders = new Set((getAdapterConfiguration().providers || []).map(provider => provider.toLowerCase()));
+  const allowedProviders = buildAllowedProviderSet(getAdapterConfiguration().providers);
   if (!row) {
     return undefined;
   }
-  if (allowedProviders.size && !allowedProviders.has(`${row.provider}`.toLowerCase())) {
+  if (parsedGuid.source === SOURCE_BETOR) {
+    return row;
+  }
+  if (allowedProviders.size && !allowedProviders.has(normalizeProviderName(row.provider))) {
     return undefined;
   }
   return row;
@@ -302,6 +321,14 @@ function normalizeProviderSelection(rawProviders) {
     return [rawProviders];
   }
   return [];
+}
+
+function buildAllowedProviderSet(providers = []) {
+  const normalizedProviders = Array.isArray(providers)
+    ? providers.map(normalizeProviderName).filter(Boolean)
+    : [];
+
+  return new Set(normalizedProviders);
 }
 
 function renderProviderUi(req, res) {
@@ -365,15 +392,17 @@ async function checkSourceHealth(source) {
     return { source, ok: true };
   } catch (error) {
     const temporary = isTemporarySourceError(source, error);
-    recordSourceFailure(source, error, { kind: 'health', temporary });
-    console.error(`Health check failed for source ${source}`, error);
+    const message = recordSourceFailure(source, error, { kind: 'health', temporary });
+    console.error(`[health:${source}] ${message}`);
     return { source, ok: false, error: error.message, temporary };
   }
 }
 
-async function buildRuntimeStatus() {
+async function buildRuntimeStatus({ probeSources = false } = {}) {
   const sources = getActiveSources();
-  await Promise.all(sources.map(checkSourceHealth));
+  if (probeSources) {
+    await Promise.all(sources.map(checkSourceHealth));
+  }
   return {
     ...buildStatusSnapshot(sources),
     betor: getBetorRuntimeStatus(),
@@ -384,7 +413,11 @@ function isTemporarySourceError(source, error) {
   if (source === SOURCE_BETOR) {
     return isTemporaryBetorError(error);
   }
-  return false;
+  const statusCode = error?.response?.status || error?.statusCode;
+  const code = error?.code || error?.cause?.code;
+  return ['ECONNABORTED', 'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'ENETUNREACH', 'EAI_AGAIN'].includes(code)
+    || statusCode === 429
+    || (statusCode >= 500 && statusCode < 600);
 }
 
 function getSourceLabel(source) {
@@ -461,19 +494,23 @@ async function searchSourceRowsSafely(source, options) {
     return rows;
   } catch (error) {
     const temporary = isTemporarySourceError(source, error);
-    recordSourceFailure(source, error, { kind: 'search', temporary });
-    console.error(`Failed searching source ${source}`, error);
+    const message = recordSourceFailure(source, error, { kind: 'search', temporary });
+    console.error(`[search:${source}] ${message}`);
     throw error;
   }
 }
 
-function mergeRowsInSourceOrder(orderedSources, resultsBySource, limit) {
+function mergeRowsInSourceOrder(orderedSources, resultsBySource, limit, allowedProviders = new Set()) {
   const mergedRows = [];
   const seenKeys = new Set();
 
   for (const source of orderedSources) {
     const rows = resultsBySource.get(source) || [];
     for (const row of rows) {
+      if (allowedProviders.size && !allowedProviders.has(normalizeProviderName(row.provider))) {
+        continue;
+      }
+
       const dedupeKey = `${row.infoHash}:${row.fileIndex || 0}`;
       if (seenKeys.has(dedupeKey)) {
         continue;
@@ -487,6 +524,15 @@ function mergeRowsInSourceOrder(orderedSources, resultsBySource, limit) {
   }
 
   return mergedRows;
+}
+
+function normalizeProviderName(value) {
+  return `${value || ''}`
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '')
+      .replace(/torrents?$/, '');
 }
 
 function buildEffectiveSourceOrder(activeSources) {
