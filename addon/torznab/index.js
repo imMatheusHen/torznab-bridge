@@ -230,6 +230,7 @@ async function searchReleaseRows(options) {
   const limit = options.limit || 100;
   const activeSources = getActiveSources();
   const orderedSources = buildEffectiveSourceOrder(activeSources);
+  const allowedProviders = buildAllowedProviderSet(options.providers);
   const resultsBySource = new Map();
 
   if (orderedSources.includes(SOURCE_BETOR)) {
@@ -245,7 +246,7 @@ async function searchReleaseRows(options) {
     });
   }
 
-  return mergeRowsInSourceOrder(orderedSources, resultsBySource, limit);
+  return mergeRowsInSourceOrder(orderedSources, resultsBySource, limit, allowedProviders);
 }
 
 function normalizeTextQuery(action, query) {
@@ -279,11 +280,14 @@ function buildChannelTitle(action, query) {
 async function getReleaseByGuid(guid) {
   const parsedGuid = parseReleaseGuid(guid);
   const row = await getReleaseBySourceGuid(parsedGuid);
-  const allowedProviders = new Set((getAdapterConfiguration().providers || []).map(provider => provider.toLowerCase()));
+  const allowedProviders = buildAllowedProviderSet(getAdapterConfiguration().providers);
   if (!row) {
     return undefined;
   }
-  if (allowedProviders.size && !allowedProviders.has(`${row.provider}`.toLowerCase())) {
+  if (parsedGuid.source === SOURCE_BETOR) {
+    return row;
+  }
+  if (allowedProviders.size && !allowedProviders.has(normalizeProviderName(row.provider))) {
     return undefined;
   }
   return row;
@@ -302,6 +306,14 @@ function normalizeProviderSelection(rawProviders) {
     return [rawProviders];
   }
   return [];
+}
+
+function buildAllowedProviderSet(providers = []) {
+  const normalizedProviders = Array.isArray(providers)
+    ? providers.map(normalizeProviderName).filter(Boolean)
+    : [];
+
+  return new Set(normalizedProviders);
 }
 
 function renderProviderUi(req, res) {
@@ -467,13 +479,17 @@ async function searchSourceRowsSafely(source, options) {
   }
 }
 
-function mergeRowsInSourceOrder(orderedSources, resultsBySource, limit) {
+function mergeRowsInSourceOrder(orderedSources, resultsBySource, limit, allowedProviders = new Set()) {
   const mergedRows = [];
   const seenKeys = new Set();
 
   for (const source of orderedSources) {
     const rows = resultsBySource.get(source) || [];
     for (const row of rows) {
+      if (allowedProviders.size && !allowedProviders.has(normalizeProviderName(row.provider))) {
+        continue;
+      }
+
       const dedupeKey = `${row.infoHash}:${row.fileIndex || 0}`;
       if (seenKeys.has(dedupeKey)) {
         continue;
@@ -487,6 +503,15 @@ function mergeRowsInSourceOrder(orderedSources, resultsBySource, limit) {
   }
 
   return mergedRows;
+}
+
+function normalizeProviderName(value) {
+  return `${value || ''}`
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '')
+      .replace(/torrents?$/, '');
 }
 
 function buildEffectiveSourceOrder(activeSources) {
