@@ -33,6 +33,7 @@ import {
 import {
   buildStatusSnapshot,
   recordConfigurationSaved,
+  recordDownloadEvent,
   recordSearchEvent,
   recordSourceFailure,
   recordSourceSuccess,
@@ -64,8 +65,9 @@ app.get('/status', handleStatusRequest);
 app.get('/health', async (_, res) => {
   const snapshot = await buildRuntimeStatus();
   const response = {
-    ok: snapshot.ok,
-    degraded: snapshot.degraded,
+    ok: true,
+    dependenciesOk: snapshot.ok,
+    degraded: snapshot.degraded || !snapshot.ok,
     service: 'torznab-bridge',
     source: getSourceMode(),
     sources: getActiveSources(),
@@ -75,11 +77,7 @@ app.get('/health', async (_, res) => {
     betor: snapshot.betor,
   };
 
-  if (!snapshot.ok) {
-    response.error = 'all_enabled_indexers_unreachable';
-  }
-
-  res.status(snapshot.ok ? 200 : 503).json(response);
+  res.json(response);
 });
 
 app.get('/download/:guid', async (req, res) => {
@@ -88,6 +86,9 @@ app.get('/download/:guid', async (req, res) => {
     if (!row) {
       res.status(404).send('Release not found');
       return;
+    }
+    if (req.method === 'GET') {
+      recordDownloadEvent({ row, requester: buildRequester(req) });
     }
     res.redirect(302, buildMagnetUrl(row));
   } catch (error) {
@@ -162,7 +163,13 @@ async function handleApiRequest(req, res) {
     const rows = await searchReleaseRows(buildSearchOptions(action, req.query));
     const items = rows.map(row => toTorznabItem(row, baseUrl));
     const channelTitle = buildChannelTitle(action, req.query);
-    recordSearchEvent({ action, query: req.query, count: items.length });
+    recordSearchEvent({
+      action,
+      query: req.query,
+      count: items.length,
+      requester: buildRequester(req),
+      releases: rows,
+    });
     res.type('application/xml').send(buildRssXml(channelTitle, items));
   } catch (error) {
     console.error('Torznab Bridge request failed', error);
@@ -170,8 +177,8 @@ async function handleApiRequest(req, res) {
   }
 }
 
-async function handleStatusRequest(_, res) {
-  const snapshot = await buildRuntimeStatus();
+async function handleStatusRequest(req, res) {
+  const snapshot = await buildRuntimeStatus({ probeSources: req.query.probe === '1' });
   res.json({
     service: 'torznab-bridge',
     ok: snapshot.ok,
@@ -202,6 +209,14 @@ function getRequestBaseUrl(req) {
     return process.env.TORZNAB_BASE_URL;
   }
   return `${req.protocol}://${req.get('host')}`;
+}
+
+function buildRequester(req) {
+  const forwardedFor = `${req.get('x-forwarded-for') || ''}`.split(',')[0].trim();
+  return {
+    ip: forwardedFor || req.get('x-real-ip') || req.ip || req.socket?.remoteAddress,
+    userAgent: req.get('user-agent'),
+  };
 }
 
 function buildSearchOptions(action, query) {
@@ -377,15 +392,17 @@ async function checkSourceHealth(source) {
     return { source, ok: true };
   } catch (error) {
     const temporary = isTemporarySourceError(source, error);
-    recordSourceFailure(source, error, { kind: 'health', temporary });
-    console.error(`Health check failed for source ${source}`, error);
+    const message = recordSourceFailure(source, error, { kind: 'health', temporary });
+    console.error(`[health:${source}] ${message}`);
     return { source, ok: false, error: error.message, temporary };
   }
 }
 
-async function buildRuntimeStatus() {
+async function buildRuntimeStatus({ probeSources = false } = {}) {
   const sources = getActiveSources();
-  await Promise.all(sources.map(checkSourceHealth));
+  if (probeSources) {
+    await Promise.all(sources.map(checkSourceHealth));
+  }
   return {
     ...buildStatusSnapshot(sources),
     betor: getBetorRuntimeStatus(),
@@ -396,7 +413,11 @@ function isTemporarySourceError(source, error) {
   if (source === SOURCE_BETOR) {
     return isTemporaryBetorError(error);
   }
-  return false;
+  const statusCode = error?.response?.status || error?.statusCode;
+  const code = error?.code || error?.cause?.code;
+  return ['ECONNABORTED', 'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'ENETUNREACH', 'EAI_AGAIN'].includes(code)
+    || statusCode === 429
+    || (statusCode >= 500 && statusCode < 600);
 }
 
 function getSourceLabel(source) {
@@ -473,8 +494,8 @@ async function searchSourceRowsSafely(source, options) {
     return rows;
   } catch (error) {
     const temporary = isTemporarySourceError(source, error);
-    recordSourceFailure(source, error, { kind: 'search', temporary });
-    console.error(`Failed searching source ${source}`, error);
+    const message = recordSourceFailure(source, error, { kind: 'search', temporary });
+    console.error(`[search:${source}] ${message}`);
     throw error;
   }
 }

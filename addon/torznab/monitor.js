@@ -1,6 +1,7 @@
 import { SOURCE_OPTIONS } from './source.js';
 
-const EVENT_LIMIT = 10;
+const EVENT_LIMIT = 30;
+const EVENT_RELEASE_LIMIT = 100;
 const FAILURE_EVENT_COOLDOWN_MS = 2 * 60 * 1000;
 const RECOVERY_WINDOW_MS = 15 * 60 * 1000;
 
@@ -16,12 +17,33 @@ export function recordConfigurationSaved({ providers = [], sources = [] } = {}) 
   });
 }
 
-export function recordSearchEvent({ action, query, count } = {}) {
+export function recordSearchEvent({ action, query, count, requester, releases = [] } = {}) {
   const label = buildSearchLabel(action, query);
+  const requesterDetails = normalizeRequester(requester);
+  const releaseDetails = summarizeReleases(releases);
   pushEvent({
     level: 'info',
     kind: 'search',
-    message: `${label} retornou ${count} resultado(s).`,
+    message: `${label} solicitada por ${requesterDetails.label} retornou ${count} resultado(s).`,
+    requester: requesterDetails,
+    releases: releaseDetails,
+  });
+}
+
+export function recordDownloadEvent({ row, requester } = {}) {
+  if (!row) {
+    return;
+  }
+
+  const requesterDetails = normalizeRequester(requester);
+  const [release] = summarizeReleases([row]);
+  pushEvent({
+    level: 'info',
+    kind: 'download',
+    source: row._source,
+    message: `Torrent enviado para ${requesterDetails.label}: ${release.title}.`,
+    requester: requesterDetails,
+    releases: [release],
   });
 }
 
@@ -50,7 +72,8 @@ export function recordSourceSuccess(sourceKey, { kind = 'health', message } = {}
 export function recordSourceFailure(sourceKey, error, { kind = 'health', temporary = false } = {}) {
   const state = ensureState(sourceKey);
   const now = new Date().toISOString();
-  const message = normalizeErrorMessage(error, state.label, temporary);
+  const details = extractErrorDetails(error);
+  const message = normalizeErrorMessage(error, state.label, temporary, details);
   const signature = `${kind}:${temporary}:${message}`;
 
   state.lastCheckAt = now;
@@ -66,10 +89,13 @@ export function recordSourceFailure(sourceKey, error, { kind = 'health', tempora
       kind,
       source: sourceKey,
       message,
+      error: details,
     });
     state.lastFailureSignature = signature;
     state.lastFailureEventAt = now;
   }
+
+  return message;
 }
 
 export function buildStatusSnapshot(activeSources = []) {
@@ -189,11 +215,18 @@ function buildStatusMessage(state, status, enabled) {
   return 'Aguardando a primeira verificação.';
 }
 
-function normalizeErrorMessage(error, label, temporary) {
-  if (temporary) {
-    return error?.message || `${label} está temporariamente indisponível.`;
-  }
-  return error?.message || `Falha ao consultar ${label}.`;
+function normalizeErrorMessage(error, label, temporary, details = {}) {
+  const reason = error?.message || (temporary
+    ? `${label} está temporariamente indisponível.`
+    : `Falha ao consultar ${label}.`);
+  const diagnostics = [
+    details.statusCode ? `HTTP ${details.statusCode}` : undefined,
+    details.code ? `código ${details.code}` : undefined,
+    details.endpoint ? `endpoint ${details.endpoint}` : undefined,
+    details.retryAfterMs != null ? `nova tentativa em ${details.retryAfterMs} ms` : undefined,
+  ].filter(Boolean);
+  const availability = temporary ? 'indisponibilidade temporária' : 'erro';
+  return `${label} com ${availability}: ${reason}${diagnostics.length ? ` (${diagnostics.join(', ')})` : ''}`;
 }
 
 function buildSearchLabel(action, query = {}) {
@@ -213,6 +246,57 @@ function pushEvent(event) {
     ...event,
   });
   recentEvents.splice(EVENT_LIMIT);
+}
+
+function normalizeRequester(requester = {}) {
+  const ip = truncate(requester.ip || 'IP desconhecido', 64);
+  const userAgent = truncate(requester.userAgent || 'cliente desconhecido', 160);
+  const client = userAgent.split(/[\s/]/)[0] || 'cliente desconhecido';
+  return {
+    ip,
+    userAgent,
+    client,
+    label: `${client} (${ip})`,
+  };
+}
+
+function summarizeReleases(rows) {
+  return rows.slice(0, EVENT_RELEASE_LIMIT).map(row => ({
+    title: truncate(row.torrentTitle || row.fileTitle || row.infoHash || 'Torrent sem título', 240),
+    provider: truncate(row.provider || 'desconhecido', 80),
+    source: truncate(row._source || 'desconhecida', 40),
+    infoHash: truncate(row.infoHash || '', 64),
+  }));
+}
+
+function extractErrorDetails(error = {}) {
+  const statusCode = error.statusCode || error.response?.status;
+  const code = error.code || error.cause?.code;
+  const endpoint = sanitizeEndpoint(error.config?.url || error.cause?.config?.url);
+  return {
+    statusCode,
+    code,
+    endpoint,
+    retryAfterMs: error.retryAfterMs,
+    circuitState: error.circuitState,
+  };
+}
+
+function sanitizeEndpoint(rawUrl) {
+  if (!rawUrl) {
+    return undefined;
+  }
+  try {
+    const parsed = new URL(rawUrl);
+    return `${parsed.host}${parsed.pathname}`;
+  } catch {
+    return truncate(rawUrl, 160).split('?')[0];
+  }
+}
+
+function truncate(value, maxLength) {
+  const normalized = `${value || ''}`.trim();
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1)}…` : normalized;
 }
 
 function isCooldownExpired(lastTimestamp) {

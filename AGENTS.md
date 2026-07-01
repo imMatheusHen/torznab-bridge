@@ -19,10 +19,11 @@
 
 - Run `node --check` for every changed JavaScript file.
 - Validate targeted source/cache behavior before building the image.
-- After deployment, check `docker compose ps`, bounded logs, `/health`, `/status`, and a real `/api` query.
+- After deployment, check `docker compose ps`, bounded logs, passive `/health`, `/status`, active `/status?probe=1`, and a real `/api` query.
 
 ## Constraints
 
 - Preserve support for both `TORZNAB_SOURCES` and the legacy `TORZNAB_SOURCE` fallback.
 - Never commit runtime configuration, API keys, tokens, or credentials.
 - Keep Torznab XML output compatible with Prowlarr and Arr clients.
+- `/health` is a local liveness check and must not call upstream indexers; only explicit probes may do so.
