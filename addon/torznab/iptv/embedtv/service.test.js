@@ -96,22 +96,24 @@ test('invalidates a failed resolution and retries once with a fresh page', async
   assert.equal(service.getStatus().metrics.resolutionRefreshes, 1);
 });
 
-test('invalidates a cached resolution after a proxied CDN returns 403', async () => {
-  const client = new FakeClient();
-  client.fetchStream = async () => ({
-    ok: false,
-    status: 403,
-    headers: new Headers(),
-    body: { cancel: async () => {} },
-  });
-  const service = new EmbedTvService({ client });
-  await service.resolveChannel('espn');
-  service.proxyOrigins.set('espn', { origins: new Set(['https://cdn.example']), updatedAt: 0 });
+for (const failureStatus of [403, 404]) {
+  test(`invalidates a cached resolution after a proxied CDN returns ${failureStatus}`, async () => {
+    const client = new FakeClient();
+    client.fetchStream = async () => ({
+      ok: false,
+      status: failureStatus,
+      headers: new Headers(),
+      body: { cancel: async () => {} },
+    });
+    const service = new EmbedTvService({ client });
+    await service.resolveChannel('espn');
+    service.proxyOrigins.set('espn', { origins: new Set(['https://cdn.example']), updatedAt: 0 });
 
-  await assert.rejects(
-    service.openProxyResource('espn', 'https://cdn.example/segment.ts'),
-    error => error.statusCode === 403,
-  );
-  assert.equal(service.resolutionCache.peek('espn'), undefined);
-  assert.equal(service.getStatus().metrics.resolutionRefreshes, 1);
-});
+    await assert.rejects(
+      service.openProxyResource('espn', 'https://cdn.example/segment.ts'),
+      error => error.statusCode === failureStatus,
+    );
+    assert.equal(service.resolutionCache.peek('espn'), undefined);
+    assert.equal(service.getStatus().metrics.resolutionRefreshes, 1);
+  });
+}
