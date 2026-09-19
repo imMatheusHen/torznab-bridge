@@ -38,7 +38,7 @@ test('accepts HTTPS CDN origins but rejects insecure and private proxy targets',
   assert.equal(isSafeUpstreamUrl('https://[fd00::1]/live.m3u8'), false);
 });
 
-test('does not select static fallback when EmbedTV requires a browser challenge', async () => {
+test('selects a public static HLS source when challenge markers coexist on the page', async () => {
   const html = `
     <script>
       fetch('https://api.cloudflaire.lat/get_token', { method: 'POST' });
@@ -48,6 +48,21 @@ test('does not select static fallback when EmbedTV requires a browser challenge'
   const candidates = extractStreamCandidates(html, { pageUrl: 'https://dynamic.embedtv.lat/afazenda' });
   assert.equal(isBrowserChallengeFlow(html), true);
   assert.equal(candidates[0].fallback, true);
+  const resolution = await resolveChannelPage({ id: 'afazenda', pageUrl: 'https://dynamic.embedtv.lat/afazenda' }, {
+    async fetchChannelPage() { return html; },
+    userAgent: 'test-agent',
+  });
+  assert.equal(resolution.streamUrl, 'https://cdn.example/static.txt');
+  assert.equal(resolution.streamKind, 'txt');
+});
+
+test('rejects a challenge page when it exposes only a generic dynamic origin', async () => {
+  const html = `
+    <script>
+      fetch('https://api.cloudflaire.lat/get_token', { method: 'POST' });
+      startPlayer(data.url);
+      startPlayer('https://live-chunks.mediacdn.net/v1/manifest/fallback.m3u8');
+    </script>`;
   await assert.rejects(
     resolveChannelPage({ id: 'afazenda', pageUrl: 'https://dynamic.embedtv.lat/afazenda' }, {
       async fetchChannelPage() { return html; },

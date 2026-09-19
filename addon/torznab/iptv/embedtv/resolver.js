@@ -71,7 +71,14 @@ export async function resolveChannelPage(channel, client) {
   const html = await client.fetchChannelPage(channel.pageUrl);
   const candidates = extractStreamCandidates(html, { pageUrl: channel.pageUrl });
   const browserChallenge = isBrowserChallengeFlow(html);
-  const selected = selectStreamCandidate(candidates, { excludeFallback: browserChallenge });
+  // Some current pages keep the protected dynamic flow but also publish a
+  // static HLS source (`var src = ...txt`). It is part of the public HTML,
+  // not an authentication bypass, so it remains usable. Only discard generic
+  // candidates when the challenge is the only flow available.
+  const selectableCandidates = browserChallenge
+    ? candidates.filter(candidate => !candidate.genericFallback)
+    : candidates;
+  const selected = selectStreamCandidate(selectableCandidates);
   if (!selected) {
     throw new EmbedTvError(browserChallenge
       ? 'EmbedTV exige a execução pública do Turnstile para gerar a origem do stream'
