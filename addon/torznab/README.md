@@ -43,3 +43,6 @@ acesso direto, os segmentos permanecem fora do servidor.
 ## Observação
 
 O bridge adapta metadados de indexadores configurados; ele não implementa scraping próprio de todos os trackers.
+
+Para a metodologia reproduzível de investigação e resolução HLS do EmbedTV,
+consulte [../../docs/EMBEDTV-STREAM-RESOLUTION.md](../../docs/EMBEDTV-STREAM-RESOLUTION.md).

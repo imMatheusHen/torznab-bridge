@@ -54,6 +54,18 @@ Escolha uma das opções abaixo:
 
 6. Clique em `Save`.
 
+## IPTV / EmbedTV
+
+O bridge também fornece uma integração IPTV nativa, sem transcodificação:
+
+- Playlist M3U: `http://IP_DO_SERVIDOR:9699/iptv/embedtv/playlist.m3u`
+- EPG XMLTV: `http://IP_DO_SERVIDOR:9699/iptv/embedtv/epg.xml`
+- Eventos: `http://IP_DO_SERVIDOR:9699/iptv/embedtv/events`
+
+Consulte o [guia público de resolução EmbedTV/HLS](docs/EMBEDTV-STREAM-RESOLUTION.md)
+para entender a descoberta de manifestos, a decisão direct/proxy e os testes
+seguros de segmentos.
+
 ## Aviso legal
 
 Este projeto apenas adapta e reexpõe metadados fornecidos pelas fontes configuradas pelo usuário.
