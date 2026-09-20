@@ -16,6 +16,13 @@ import { buildM3u, buildXmltv } from './format.js';
 import { getManifestResourceUrls, rewriteHlsManifest } from './hls.js';
 import { extractNestedManifestUrl, isHlsBody, resolveChannelPage } from './resolver.js';
 
+const FFMPEG_ALLOWED_HLS_EXTENSIONS = new Set([
+  '3gp', 'aac', 'ac3', 'avi', 'cmfa', 'cmfv', 'eac3', 'ec3', 'flac',
+  'fmp4', 'html', 'm4a', 'm4s', 'm4v', 'mkv', 'mp2', 'mp3', 'mp4',
+  'mpeg', 'mpegts', 'mpg', 'mov', 'ogg', 'ogv', 'oga', 'ts', 'vob',
+  'vtt', 'wav', 'webvtt',
+]);
+
 export class EmbedTvService {
   constructor({ client = new EmbedTvClient(), clock = () => Date.now(), cacheOptions = {} } = {}) {
     this.client = client;
@@ -311,7 +318,10 @@ export class EmbedTvService {
   buildProxyUrl(baseUrl, channelId, target) {
     const root = `${baseUrl || ''}`.replace(/\/$/, '');
     const encoded = Buffer.from(target, 'utf8').toString('base64url');
-    return `${root}/iptv/embedtv/channel/${encodeURIComponent(channelId)}/hls?u=${encoded}`;
+    // Jellyfin's FFmpeg rejects HLS resources whose URL has no allowed media
+    // extension before it makes the request. Keep the upstream target opaque
+    // while exposing a harmless, allowed suffix on the bridge URL.
+    return `${root}/iptv/embedtv/channel/${encodeURIComponent(channelId)}/hls.ts?u=${encoded}`;
   }
 
   isAllowedProxyTarget(channelId, targetUrl) {
@@ -346,8 +356,10 @@ export class EmbedTvService {
 
   async chooseManifestMode(resourceUrls, resolution) {
     if (process.env.TORZNAB_EMBEDTV_HLS_PROXY === '1') return 'proxy';
-    const probeUrl = resourceUrls.find(url => !/\.(?:m3u8|txt)(?:$|\?)/i.test(new URL(url).pathname));
+    const mediaResourceUrls = resourceUrls.filter(url => !isManifestResourceUrl(url));
+    const probeUrl = mediaResourceUrls[0];
     if (!probeUrl) return 'direct';
+    if (mediaResourceUrls.some(url => !isFfmpegAllowedHlsResource(url))) return 'proxy';
     try {
       const response = await this.client.fetchStream(probeUrl, {
         retry: false,
@@ -389,6 +401,23 @@ export class EmbedTvService {
     });
     this.recentFailures.splice(8);
     console.warn(`[EmbedTV] channel=${context.split(':')[1] || '-'} stage=${diagnostic.stage || context} hostname=${diagnostic.hostname || '-'} status=${status || '-'} redirect=${diagnostic.redirected ? 'true' : 'false'} content-type=${diagnostic.contentType || '-'} referer-host=${diagnostic.refererHost || '-'} cookie-present=${diagnostic.cookiePresent ? 'true' : 'false'}`);
+  }
+}
+
+function isManifestResourceUrl(value) {
+  try {
+    return /\.(?:m3u8|txt)$/i.test(new URL(value).pathname);
+  } catch {
+    return false;
+  }
+}
+
+function isFfmpegAllowedHlsResource(value) {
+  try {
+    const match = new URL(value).pathname.toLowerCase().match(/\.([a-z0-9]+)$/);
+    return Boolean(match && FFMPEG_ALLOWED_HLS_EXTENSIONS.has(match[1]));
+  } catch {
+    return false;
   }
 }
 
