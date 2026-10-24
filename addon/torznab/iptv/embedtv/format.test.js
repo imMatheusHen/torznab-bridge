@@ -35,6 +35,7 @@ test('builds XMLTV with UTF-8 escaping and inferred stop from next program', () 
     ],
   });
   assert.match(xml, /encoding="UTF-8"/);
+  assert.match(xml, /generator-info-url="https:\/\/embedtv\.cc"/);
   assert.match(xml, /<display-name>ESPN &amp; Brasil<\/display-name>/);
   assert.match(xml, /title lang="pt">A &lt; B<\/title>/);
   assert.match(xml, /desc lang="pt">x &amp; y<\/desc>/);
