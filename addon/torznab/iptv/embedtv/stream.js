@@ -5,5 +5,12 @@ export function streamToResponse(response, destination) {
     destination.end();
     return;
   }
-  Readable.fromWeb(response.body).pipe(destination);
+  const source = Readable.fromWeb(response.body);
+  source.once('error', error => {
+    if (!destination.destroyed) destination.destroy(error);
+  });
+  destination.once('close', () => {
+    if (!destination.writableFinished) source.destroy();
+  });
+  source.pipe(destination);
 }

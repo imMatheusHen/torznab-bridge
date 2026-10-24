@@ -1,4 +1,8 @@
-export const EMBEDTV_BASE_URL = 'https://embedtv.lat';
+export const EMBEDTV_BASE_URL = 'https://embedtv.cc';
+export const EMBEDTV_TRUSTED_PAGE_DOMAINS = Object.freeze([
+  'embedtv.cc',
+  'embedtv.lat',
+]);
 export const EMBEDTV_API_PATHS = Object.freeze({
   channels: '/api/channels',
   epg: '/api/epg_all',

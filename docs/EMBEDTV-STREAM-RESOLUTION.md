@@ -80,9 +80,9 @@ deve ser usado para baixar ou arquivar streams completas.
 Consulte a API de catálogo primeiro:
 
 ```text
-GET https://embedtv.lat/api/channels
-GET https://embedtv.lat/api/epg_all
-GET https://embedtv.lat/api/events
+GET https://embedtv.cc/api/channels
+GET https://embedtv.cc/api/epg_all
+GET https://embedtv.cc/api/events
 ```
 
 O catálogo pode conter ID, nome, imagem, categorias e URL da página, mas o

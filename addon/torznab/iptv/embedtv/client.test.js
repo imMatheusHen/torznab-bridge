@@ -1,6 +1,34 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { EmbedTvClient } from './client.js';
+import { EmbedTvClient, isEmbedTvPageUrl } from './client.js';
+import { EMBEDTV_BASE_URL } from './constants.js';
+
+test('defaults the catalog API to the current .cc domain', () => {
+  assert.equal(EMBEDTV_BASE_URL, 'https://embedtv.cc');
+});
+
+test('accepts EmbedTV apex and subdomains for current and legacy roots only', () => {
+  for (const url of [
+    'https://embedtv.cc/ae',
+    'https://ww0.embedtv.cc/ae',
+    'https://deep.dynamic.embedtv.cc/ae',
+    'https://embedtv.lat/ae',
+    'https://dynamic.embedtv.lat/ae',
+  ]) {
+    assert.equal(isEmbedTvPageUrl(url), true, url);
+  }
+
+  for (const url of [
+    'http://embedtv.cc/ae',
+    'https://user:pass@ww0.embedtv.cc/ae',
+    'https://notembedtv.cc/ae',
+    'https://embedtv.cc.attacker.example/ae',
+    'https://dynamic.embedtv.lat.attacker.example/ae',
+    'https://attacker.example/ae',
+  ]) {
+    assert.equal(isEmbedTvPageUrl(url), false, url);
+  }
+});
 
 test('times out while reading a stalled text response', async () => {
   const client = new EmbedTvClient({

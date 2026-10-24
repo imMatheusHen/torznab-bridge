@@ -13,7 +13,7 @@ import {
   probeHlsResources,
 } from './embedtv-probe-hls.mjs';
 
-const DEFAULT_BASE_URL = 'https://embedtv.lat';
+const DEFAULT_BASE_URL = 'https://embedtv.cc';
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36';
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_CHANNEL_LIMIT = 5;
