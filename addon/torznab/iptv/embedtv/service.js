@@ -14,6 +14,7 @@ import {
 } from './catalog.js';
 import { buildM3u, buildXmltv } from './format.js';
 import { getManifestResourceUrls, rewriteHlsManifest } from './hls.js';
+import { probeHlsPlayback, toPublicPlaybackError } from './playback.js';
 import { extractNestedManifestUrl, isHlsBody, resolveChannelPage } from './resolver.js';
 
 const FFMPEG_ALLOWED_HLS_EXTENSIONS = new Set([
@@ -52,6 +53,7 @@ export class EmbedTvService {
       clock,
     });
     this.proxyOrigins = new Map();
+    this.manifestModeCache = new Map();
     this.recentFailures = [];
     this.state = {
       status: 'unknown',
@@ -61,6 +63,12 @@ export class EmbedTvService {
       lastResolutionAt: undefined,
       lastResolutionChannelId: undefined,
       lastMode: undefined,
+      lastPlaybackProbeAt: undefined,
+      lastPlaybackChannelId: undefined,
+      lastPlaybackSegmentHost: undefined,
+      lastPlaybackBytes: undefined,
+      lastPlaybackContentType: undefined,
+      lastPlaybackRangeStatus: undefined,
     };
     this.metrics = {
       apiRequests: 0,
@@ -70,6 +78,8 @@ export class EmbedTvService {
       resolutionRefreshes: 0,
       directManifests: 0,
       proxiedManifests: 0,
+      playbackProbes: 0,
+      playbackProbeBytes: 0,
     };
   }
 
@@ -161,6 +171,7 @@ export class EmbedTvService {
   invalidateResolution(channelId) {
     this.resolutionCache.invalidate(channelId);
     this.proxyOrigins.delete(channelId);
+    this.manifestModeCache.delete(channelId);
   }
 
   async getChannelManifest(channelId, { baseUrl } = {}) {
@@ -171,7 +182,7 @@ export class EmbedTvService {
         const resolution = await this.resolveChannel(channelId, { force: attempt > 0 });
         const loaded = await this.loadManifest(resolution);
         const resourceUrls = getManifestResourceUrls(loaded.text, loaded.url);
-        const mode = await this.chooseManifestMode(resourceUrls, resolution);
+        const mode = await this.chooseManifestMode(channelId, resourceUrls, resolution);
         this.registerProxyOrigins(channelId, loaded.url, resourceUrls);
         const rewritten = rewriteHlsManifest(loaded.text, loaded.url, {
           mode,
@@ -191,52 +202,62 @@ export class EmbedTvService {
           this.invalidateResolution(channelId);
           continue;
         }
+        this.markPlaybackFailure(error, channelId);
         throw error;
       }
     }
     throw lastError || new EmbedTvError('Não foi possível resolver o manifesto HLS', { code: 'manifest_failed' });
   }
 
-  async openProxyResource(channelId, targetUrl) {
+  async openProxyResource(channelId, targetUrl, { range } = {}) {
     if (!this.isAllowedProxyTarget(channelId, targetUrl)) {
       throw new EmbedTvError('Destino HLS não autorizado', { statusCode: 403, code: 'proxy_target_denied' });
     }
     this.metrics.proxyRequests += 1;
-    const resolution = await this.resolveChannel(channelId);
-    const response = await this.client.fetchStream(targetUrl, {
-      retry: false,
-      stage: 'resource',
-      headers: resolution.headers,
-    });
-    if (!response.ok) {
-      const cancel = response.body?.cancel?.();
-      if (cancel) await cancel.catch(() => {});
-      if (isResolutionRefreshStatus(response.status)) {
-        this.metrics.resolutionRefreshes += 1;
-        this.invalidateResolution(channelId);
-      }
-      throw new EmbedTvError(`CDN respondeu HTTP ${response.status}`, {
-        statusCode: response.status,
-        code: `cdn_${response.status}`,
-        url: targetUrl,
+    try {
+      const resolution = await this.resolveChannel(channelId);
+      const headers = { ...resolution.headers };
+      if (isSingleByteRange(range)) headers.Range = range;
+      const response = await this.client.fetchStream(targetUrl, {
+        retry: false,
+        stage: 'resource',
+        headers,
       });
-    }
-    const contentType = response.headers.get('content-type') || '';
-    const isManifest = /\.(?:m3u8|txt)(?:$|\?)/i.test(new URL(targetUrl).pathname)
-      || contentType.toLowerCase().includes('mpegurl');
-    if (isManifest) {
-      const text = await response.text();
-      if (isHlsBody(text, contentType)) {
-        const resourceUrls = getManifestResourceUrls(text, targetUrl);
-        this.registerProxyOrigins(channelId, targetUrl, resourceUrls);
-        const rewritten = rewriteHlsManifest(text, targetUrl, {
-          mode: 'proxy',
-          proxyUrl: target => this.buildProxyUrl(undefined, channelId, target),
+      if (!response.ok) {
+        const cancel = response.body?.cancel?.();
+        if (cancel) await cancel.catch(() => {});
+        if (isResolutionRefreshStatus(response.status)) {
+          this.metrics.resolutionRefreshes += 1;
+          this.invalidateResolution(channelId);
+        }
+        throw new EmbedTvError(`CDN respondeu HTTP ${response.status}`, {
+          statusCode: response.status,
+          code: `cdn_${response.status}`,
+          url: targetUrl,
+          stage: 'resource',
         });
-        return { kind: 'manifest', text: `${rewritten}${rewritten.endsWith('\n') ? '' : '\n'}`, contentType: 'application/vnd.apple.mpegurl' };
       }
+      const contentType = response.headers.get('content-type') || '';
+      const isManifest = /\.(?:m3u8|txt)(?:$|\?)/i.test(new URL(targetUrl).pathname)
+        || contentType.toLowerCase().includes('mpegurl');
+      if (isManifest) {
+        const text = await response.text();
+        if (isHlsBody(text, contentType)) {
+          const resourceUrls = getManifestResourceUrls(text, targetUrl);
+          this.registerProxyOrigins(channelId, targetUrl, resourceUrls);
+          const rewritten = rewriteHlsManifest(text, targetUrl, {
+            mode: 'proxy',
+            proxyUrl: target => this.buildProxyUrl(undefined, channelId, target),
+          });
+          return { kind: 'manifest', text: `${rewritten}${rewritten.endsWith('\n') ? '' : '\n'}`, contentType: 'application/vnd.apple.mpegurl' };
+        }
+      }
+      return { kind: 'stream', response };
+    } catch (error) {
+      this.recordFailure(error, `resource:${channelId}`);
+      this.markPlaybackFailure(error, channelId);
+      throw error;
     }
-    return { kind: 'stream', response };
   }
 
   getStatus({ enabled = true } = {}) {
@@ -269,6 +290,12 @@ export class EmbedTvService {
       lastResolutionAt: this.state.lastResolutionAt,
       lastResolutionChannelId: this.state.lastResolutionChannelId,
       lastMode: this.state.lastMode,
+      lastPlaybackProbeAt: this.state.lastPlaybackProbeAt,
+      lastPlaybackChannelId: this.state.lastPlaybackChannelId,
+      lastPlaybackSegmentHost: this.state.lastPlaybackSegmentHost,
+      lastPlaybackBytes: this.state.lastPlaybackBytes,
+      lastPlaybackContentType: this.state.lastPlaybackContentType,
+      lastPlaybackRangeStatus: this.state.lastPlaybackRangeStatus,
       lastTestAt: this.state.lastProbeAt,
       lastFailure: this.recentFailures[0],
       recentFailures: this.recentFailures.slice(0, 8),
@@ -282,8 +309,16 @@ export class EmbedTvService {
     };
   }
 
-  async probe() {
+  async probe({ channelId: requestedChannelId } = {}) {
     const startedAt = new Date(this.clock()).toISOString();
+    const results = await this.fetchProbeApis();
+    const sampleChannel = this.selectProbeChannel(results[0], requestedChannelId);
+    const playback = await this.runPlaybackProbe(sampleChannel, requestedChannelId, startedAt);
+    this.applyProbeResult(startedAt, results, sampleChannel, playback);
+    return { ...this.getStatus(), playback };
+  }
+
+  async fetchProbeApis() {
     this.metrics.apiRequests += 3;
     const results = await Promise.allSettled([
       this.client.fetchChannels(),
@@ -297,22 +332,81 @@ export class EmbedTvService {
     for (const result of results) {
       if (result.status === 'rejected') this.recordFailure(result.reason, 'probe');
     }
-    const channelOk = channels.status === 'fulfilled';
-    const allOk = results.every(result => result.status === 'fulfilled');
+    return results;
+  }
+
+  selectProbeChannel(channelsResult, requestedChannelId) {
+    if (channelsResult.status !== 'fulfilled') return undefined;
+    const channels = this.catalogCache.peek('catalog')?.value?.channels || [];
+    return requestedChannelId
+      ? channels.find(channel => channel.id === requestedChannelId)
+      : channels.find(channel => channel.pageUrl);
+  }
+
+  async runPlaybackProbe(channel, requestedChannelId, startedAt) {
+    if (!channel) {
+      const error = new EmbedTvError(requestedChannelId
+        ? 'Canal solicitado não está no catálogo atual'
+        : 'Catálogo não contém um canal válido para testar o stream', {
+        statusCode: requestedChannelId ? 404 : 502,
+        code: requestedChannelId ? 'channel_not_found' : 'no_playable_channel',
+        stage: 'playback-probe',
+      });
+      this.markPlaybackFailure(error, requestedChannelId);
+      return { ok: false, error: toPublicPlaybackError(error) };
+    }
+
+    this.metrics.playbackProbes += 1;
+    try {
+      const playback = { ok: true, ...await this.probeChannelPlayback(channel) };
+      this.state.lastPlaybackProbeAt = startedAt;
+      this.state.lastPlaybackChannelId = channel.id;
+      this.state.lastPlaybackSegmentHost = playback.segmentHost;
+      this.state.lastPlaybackBytes = playback.bytesRead;
+      this.state.lastPlaybackContentType = playback.contentType || undefined;
+      this.state.lastPlaybackRangeStatus = playback.rangeStatus;
+      return playback;
+    } catch (error) {
+      this.recordFailure(error, `playback:${channel.id}`);
+      this.markPlaybackFailure(error, channel.id);
+      return { ok: false, error: toPublicPlaybackError(error) };
+    }
+  }
+
+  applyProbeResult(startedAt, results, sampleChannel, playback) {
+    const allApiOk = results.every(result => result.status === 'fulfilled');
     this.state.lastProbeAt = startedAt;
-    if (channelOk && allOk) {
+    if (!playback.ok) {
+      this.state.status = 'unavailable';
+      const failureMessage = playback.error?.message || playback.error?.code || 'erro desconhecido';
+      this.state.message = `Fluxo de mídia indisponível${sampleChannel ? ` no canal ${sampleChannel.name} (${sampleChannel.id})` : ''}: ${failureMessage}`;
+    } else if (allApiOk) {
       this.state.status = 'online';
       this.state.lastProbeSuccessAt = startedAt;
-      this.state.message = 'Catálogo, EPG e eventos responderam normalmente.';
-    } else if (channelOk) {
+      this.state.message = `Manifesto e primeiro segmento válidos no canal ${sampleChannel.name} (${sampleChannel.id}); catálogo, EPG e eventos responderam.`;
+    } else {
       this.state.status = 'unstable';
       this.state.lastProbeSuccessAt = startedAt;
-      this.state.message = 'Catálogo disponível, mas uma fonte auxiliar falhou.';
-    } else {
-      this.state.status = 'unavailable';
-      this.state.message = this.recentFailures[0]?.message || 'EmbedTV indisponível no momento.';
+      this.state.message = `Manifesto e primeiro segmento válidos no canal ${sampleChannel.name} (${sampleChannel.id}), mas uma fonte auxiliar falhou.`;
     }
-    return this.getStatus();
+  }
+
+  async probeChannelPlayback(channel) {
+    const result = await probeHlsPlayback({
+      channel,
+      resolveChannel: channelId => this.resolveChannel(channelId),
+      loadManifest: resolution => this.loadManifest(resolution),
+      client: this.client,
+    });
+    this.metrics.playbackProbeBytes += result.bytesRead;
+    return result;
+  }
+
+  markPlaybackFailure(error, channelId) {
+    this.state.status = 'unavailable';
+    this.state.lastPlaybackProbeAt = new Date(this.clock()).toISOString();
+    this.state.lastPlaybackChannelId = channelId;
+    this.state.message = `Falha no fluxo${channelId ? ` do canal ${channelId}` : ''}: ${error?.message || 'erro desconhecido'}`.slice(0, 260);
   }
 
   buildProxyUrl(baseUrl, channelId, target) {
@@ -354,11 +448,16 @@ export class EmbedTvService {
     throw new EmbedTvError('Limite de redirecionamentos de manifesto excedido', { code: 'manifest_loop', url });
   }
 
-  async chooseManifestMode(resourceUrls, resolution) {
+  async chooseManifestMode(channelId, resourceUrls, resolution) {
     if (process.env.TORZNAB_EMBEDTV_HLS_PROXY === '1') return 'proxy';
+    const cached = this.manifestModeCache.get(channelId);
+    if (cached && this.clock() - cached.at < 30_000) return cached.mode;
     const mediaResourceUrls = resourceUrls.filter(url => !isManifestResourceUrl(url));
     const probeUrl = mediaResourceUrls[0];
-    if (!probeUrl) return 'direct';
+    if (!probeUrl) {
+      this.manifestModeCache.set(channelId, { mode: 'direct', at: this.clock() });
+      return 'direct';
+    }
     if (mediaResourceUrls.some(url => !isFfmpegAllowedHlsResource(url))) return 'proxy';
     try {
       const response = await this.client.fetchStream(probeUrl, {
@@ -369,8 +468,11 @@ export class EmbedTvService {
       const direct = response.status >= 200 && response.status < 400;
       const cancel = response.body?.cancel?.();
       if (cancel) await cancel.catch(() => {});
-      return direct ? 'direct' : 'proxy';
+      const mode = direct ? 'direct' : 'proxy';
+      this.manifestModeCache.set(channelId, { mode, at: this.clock() });
+      return mode;
     } catch {
+      this.manifestModeCache.set(channelId, { mode: 'proxy', at: this.clock() });
       return 'proxy';
     }
   }
@@ -442,4 +544,10 @@ function buildFailureDiagnostic(error) {
 
 export function createEmbedTvService(options) {
   return new EmbedTvService(options);
+}
+
+
+function isSingleByteRange(value) {
+  return typeof value === 'string' && value.length <= 128
+    && /^bytes=(?:\d+-\d*|-\d+)$/.test(value);
 }

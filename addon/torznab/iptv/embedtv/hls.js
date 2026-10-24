@@ -24,6 +24,66 @@ export function getManifestResourceUrls(manifest, manifestUrl) {
   return [...urls];
 }
 
+export function getFirstVariantUrl(manifest, manifestUrl) {
+  const lines = `${manifest || ''}`.split(/\r?\n/);
+  let expectingVariant = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (expectingVariant && !trimmed.startsWith('#')) {
+      return toAbsoluteUrl(trimmed, manifestUrl);
+    }
+    expectingVariant = /^#EXT-X-STREAM-INF\b/i.test(trimmed);
+  }
+  return undefined;
+}
+
+export function getFirstMediaSegmentUrl(manifest, manifestUrl) {
+  const line = `${manifest || ''}`.split(/\r?\n/)
+      .map(value => value.trim())
+      .find(value => value && !value.startsWith('#'));
+  return line ? toAbsoluteUrl(line, manifestUrl) : undefined;
+}
+
+export function isPlausibleMediaSegment(value) {
+  const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value || []);
+  if (bytes.length < 4) return false;
+
+  const textPrefix = bytes.subarray(0, Math.min(bytes.length, 96)).toString('utf8').trimStart().toLowerCase();
+  if (textPrefix.startsWith('<!doctype html') || textPrefix.startsWith('<html')
+    || textPrefix.startsWith('{') || textPrefix.startsWith('[')
+    || textPrefix.startsWith('#extm3u') || textPrefix.startsWith('access denied')) {
+    return false;
+  }
+  if (bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    return false;
+  }
+
+  // MPEG-TS normally uses 188-byte packets. Some transport streams use
+  // 192-byte M2TS packets or prepend a short ID3 block.
+  for (let offset = 0; offset < Math.min(32, bytes.length); offset += 1) {
+    for (const packetSize of [188, 192]) {
+      if (bytes[offset] !== 0x47 || bytes[offset + packetSize] !== 0x47) continue;
+      if (packetSize === 192 || offset + packetSize * 2 >= bytes.length
+        || bytes[offset + packetSize * 2] === 0x47) return true;
+    }
+  }
+
+  // Fragmented MP4 segments start with an ISO BMFF box, not an arbitrary
+  // byte sequence that happens to contain a box-like marker later on.
+  if (bytes.length >= 8) {
+    const boxLength = bytes.readUInt32BE(0);
+    const boxType = bytes.toString('ascii', 4, 8);
+    if (boxLength >= 8 && ['ftyp', 'styp', 'moof', 'moov', 'sidx', 'emsg'].includes(boxType)) {
+      return true;
+    }
+  }
+
+  // Some HLS playlists carry standalone AAC/MP3 audio segments.
+  if (bytes[0] === 0x49 && bytes.toString('ascii', 0, 3) === 'ID3') return true;
+  return bytes[0] === 0xff && (bytes[1] & 0xf6) === 0xf0;
+}
+
 export function rewriteHlsManifest(manifest, manifestUrl, { mode = 'direct', proxyUrl } = {}) {
   const lines = `${manifest || ''}`.split(/\r?\n/);
   const rewrite = value => {

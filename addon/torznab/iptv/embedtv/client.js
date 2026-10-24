@@ -3,6 +3,7 @@ import { isIP } from 'node:net';
 import {
   EMBEDTV_API_PATHS,
   EMBEDTV_DEFAULT_USER_AGENT,
+  EMBEDTV_TRUSTED_PAGE_DOMAINS,
   getEmbedTvBaseUrl,
   getEmbedTvUserAgent,
 } from './constants.js';
@@ -98,7 +99,7 @@ export class EmbedTvClient {
   }
 
   async fetchChannelPage(url, options = {}) {
-    if (!isEmbedTvPageUrl(url, this.baseUrl)) {
+    if (!isEmbedTvPageUrl(url)) {
       throw new EmbedTvError('URL de canal EmbedTV inválida', { code: 'invalid_channel_url', url });
     }
     const pageUrl = new URL(url);
@@ -220,14 +221,15 @@ export function isResolutionRefreshStatus(statusCode) {
   return [401, 403, 404, 410].includes(statusCode);
 }
 
-export function isEmbedTvPageUrl(url, baseUrl = getEmbedTvBaseUrl()) {
+export function isEmbedTvPageUrl(url) {
   try {
     const candidate = new URL(url);
-    const base = new URL(baseUrl);
+    const hostname = candidate.hostname.toLowerCase().replace(/\.$/, '');
     return candidate.protocol === 'https:'
       && !candidate.username
       && !candidate.password
-      && (candidate.hostname === base.hostname || candidate.hostname.endsWith(`.${base.hostname}`));
+      && EMBEDTV_TRUSTED_PAGE_DOMAINS.some(domain =>
+        hostname === domain || hostname.endsWith(`.${domain}`));
   } catch {
     return false;
   }

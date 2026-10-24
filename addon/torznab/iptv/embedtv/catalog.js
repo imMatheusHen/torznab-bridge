@@ -40,6 +40,9 @@ export function normalizeChannel(channel, categoryById = new Map()) {
       .map(categoryId => categoryById.get(categoryId)?.name)
       .filter(Boolean);
   const pageUrl = `${channel.url || channel.page_url || channel.pageUrl || ''}`.trim();
+  if (!isEmbedTvPageUrl(pageUrl)) {
+    return undefined;
+  }
   return {
     id,
     name: `${channel.name || channel.title || channel.channel_name || `Canal ${id}`}`.trim(),
@@ -104,10 +107,10 @@ export function associateEvents(events, channels) {
 
 export function extractEmbedTvChannelId(playerUrl) {
   try {
-    const parsed = new URL(playerUrl);
-    if (parsed.protocol !== 'https:' || !parsed.hostname.endsWith('.embedtv.lat')) {
+    if (!isEmbedTvPageUrl(playerUrl)) {
       return undefined;
     }
+    const parsed = new URL(playerUrl);
     const parts = parsed.pathname.split('/').filter(Boolean);
     const id = parts.at(-1) || '';
     return /^[A-Za-z0-9][A-Za-z0-9_-]{0,80}$/.test(id) ? id : undefined;
@@ -116,8 +119,8 @@ export function extractEmbedTvChannelId(playerUrl) {
   }
 }
 
-export function isPlayableChannel(channel, baseUrl) {
-  return Boolean(channel?.pageUrl && isEmbedTvPageUrl(channel.pageUrl, baseUrl));
+export function isPlayableChannel(channel) {
+  return Boolean(channel?.pageUrl && isEmbedTvPageUrl(channel.pageUrl));
 }
 
 function normalizeProgram(item, channelId) {

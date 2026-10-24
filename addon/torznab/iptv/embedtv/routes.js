@@ -69,7 +69,7 @@ export function createEmbedTvRouter({
   router.get('/status', async (req, res) => {
     try {
       if (req.query.probe === '1' && isEnabled()) {
-        await service.probe();
+        await service.probe({ channelId: typeof req.query.channelId === 'string' ? req.query.channelId : undefined });
       }
       res.json(service.getStatus({ enabled: isEnabled() }));
     } catch (error) {
@@ -102,17 +102,19 @@ export function createEmbedTvRouter({
       return;
     }
     try {
-      const result = await service.openProxyResource(channelId, target);
+      const range = req.get('range');
+      if (range && !isSingleByteRange(range)) {
+        res.status(416).end();
+        return;
+      }
+      const result = await service.openProxyResource(channelId, target, { range });
       if (result.kind === 'manifest') {
         res.set('Cache-Control', 'no-store');
         res.type('application/vnd.apple.mpegurl').send(result.text);
         return;
       }
+      res.status(result.response.status);
       copyStreamHeaders(result.response, res);
-      req.on('close', () => {
-        const cancel = result.response.body?.cancel?.();
-        if (cancel) cancel.catch(() => {});
-      });
       streamToResponse(result.response, res);
     } catch (error) {
       sendError(res, error);
@@ -143,7 +145,7 @@ function normalizeBaseUrl(value) {
 }
 
 function copyStreamHeaders(upstream, res) {
-  for (const name of ['content-type', 'content-length', 'cache-control', 'etag', 'last-modified', 'accept-ranges']) {
+  for (const name of ['content-type', 'content-length', 'content-range', 'cache-control', 'etag', 'last-modified', 'accept-ranges']) {
     const value = upstream.headers.get(name);
     if (value) res.set(name, value);
   }
@@ -167,4 +169,10 @@ function sendError(res, error) {
     code: error?.code || 'embedtv_error',
     upstreamStatus: status === 502 ? upstreamStatus : undefined,
   });
+}
+
+
+function isSingleByteRange(value) {
+  return typeof value === 'string' && value.length <= 128
+    && /^bytes=(?:\d+-\d*|-\d+)$/.test(value);
 }
