@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { EmbedTvClient } from './client.js';
+import { EmbedTvClient, isEmbedTvPageUrl } from './client.js';
+
+test('accepts current and legacy EmbedTV page hosts without accepting lookalikes', () => {
+  assert.equal(isEmbedTvPageUrl('https://random.embedtv.cc/ae'), true);
+  assert.equal(isEmbedTvPageUrl('https://embedtv.cc/ae'), true);
+  assert.equal(isEmbedTvPageUrl('https://random.embedtv.lat/ae'), true);
+  assert.equal(isEmbedTvPageUrl('https://embedtv.cc.attacker.example/ae'), false);
+  assert.equal(isEmbedTvPageUrl('http://random.embedtv.cc/ae'), false);
+  assert.equal(isEmbedTvPageUrl('https://user@random.embedtv.cc/ae'), false);
+});
 
 test('times out while reading a stalled text response', async () => {
   const client = new EmbedTvClient({
