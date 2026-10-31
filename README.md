@@ -8,6 +8,9 @@ O projeto não faz scraping proprio do zero. Ele atua como adaptador entre fonte
 
 A configuração é feita por uma Web UI simples, onde você escolhe os **indexadores** e os **providers** que deseja utilizar.
 
+A imagem Docker é publicada para `linux/amd64` e `linux/arm64`. Em Raspberry Pi,
+use um sistema operacional de 64 bits para a plataforma ARM64.
+
 ## Instalação
 
 Escolha uma das opções abaixo:
@@ -29,6 +32,20 @@ Escolha uma das opções abaixo:
 4. Use o nome `torznab-bridge`.
 5. Cole o conteúdo de [docker-compose.yml](/deploy/portainer/docker-compose.yml).
 6. Clique em `Deploy the stack`.
+
+## Atualizar
+
+Em uma instalação com Docker Compose, execute os comandos no diretório que
+contém o arquivo `docker-compose.yml` da stack:
+
+```bash
+docker compose pull torznab-bridge
+docker compose up -d torznab-bridge
+```
+
+Isso baixa a imagem publicada mais recente e recria somente o serviço
+`torznab-bridge`. A configuração persistente em `/config` continua no volume
+montado pela stack.
 
 ## Configuração inicial
 

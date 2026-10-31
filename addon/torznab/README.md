@@ -46,3 +46,12 @@ O bridge adapta metadados de indexadores configurados; ele não implementa scrap
 
 Para a metodologia reproduzível de investigação e resolução HLS do EmbedTV,
 consulte [../../docs/EMBEDTV-STREAM-RESOLUTION.md](../../docs/EMBEDTV-STREAM-RESOLUTION.md).
+
+## Semântica dos releases
+
+- Para resultados Detour, o nome de release do magnet tem prioridade quando é
+  coerente com a consulta; títulos promocionais da página ficam como dado de
+  origem e não substituem a identidade do release.
+- O provider é transmitido no atributo Torznab `provider`, separado do título.
+  O atributo `files` só é emitido quando a origem fornece uma contagem conhecida;
+  ausência não deve ser interpretada como um arquivo nem como cobertura de série.
