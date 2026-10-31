@@ -1,7 +1,14 @@
 import { Providers } from '../lib/filter.js';
-import { SOURCE_OPTIONS } from './source.js';
+import { SOURCE_BETOR, SOURCE_DETOUR, SOURCE_OPTIONS, SOURCE_STREMIO } from './source.js';
 import { renderEmbedTvPanel, renderEmbedTvStyles } from './iptvUi.js';
+import { renderDetourPanel, renderDetourStyles } from './detour/detourUi.js';
 import { createRequire } from 'node:module';
+import { CONFIGURE_PAGE_CLIENT_SCRIPT } from './configurePageClient.js';
+import { CONFIGURE_PAGE_ACTIVITY_CLIENT_SCRIPT } from './configurePageActivityClient.js';
+import { CONFIGURE_PAGE_EVENTS_CLIENT_SCRIPT } from './configurePageEventsClient.js';
+import { CONFIGURE_PAGE_BASE_STYLES } from './configurePageStyles.js';
+import { CONFIGURE_PAGE_ACTIVITY_STYLES } from './configurePageActivityStyles.js';
+import { CONFIGURE_PAGE_INDEXER_STYLES } from './configurePageIndexerStyles.js';
 
 const require = createRequire(import.meta.url);
 const { version: APP_VERSION } = require('../package.json');
@@ -11,14 +18,44 @@ export function renderConfigurePage({
   selectedProviders = [],
   selectedSources = [],
   iptvEnabled = true,
+  detourConfig = { enabled: false, providers: ['hdrtorrent'] },
   baseUrl = '',
   saved = false,
   configPath = '',
+  defaultConfiguration = {
+    providers: [],
+    sources: [],
+    iptvEnabled: true,
+    detourEnabled: false,
+    detourProviders: ['hdrtorrent'],
+  },
 } = {}) {
-  const selectedProviderSet = new Set(selectedProviders);
-  const selectedSourceSet = new Set(selectedSources);
-  const providerButtons = Providers.options.map(provider => {
-    const isSelected = selectedProviderSet.has(provider.key);
+  const providerButtons = renderProviderButtons(selectedProviders);
+  const indexerCards = renderIndexerCards(selectedSources, detourConfig, providerButtons);
+  const hiddenSourceInputs = renderHiddenSourceInputs(selectedSources, defaultConfiguration.sources);
+  const styles = [
+    CONFIGURE_PAGE_BASE_STYLES,
+    CONFIGURE_PAGE_INDEXER_STYLES,
+    CONFIGURE_PAGE_ACTIVITY_STYLES,
+    renderEmbedTvStyles(),
+    renderDetourStyles(),
+  ].join('\n');
+  const body = renderPageContent({
+    saved,
+    baseUrl,
+    configPath,
+    iptvEnabled,
+    indexerCards,
+    hiddenSourceInputs,
+    defaultConfiguration,
+  });
+  return renderPageDocument({ styles, body });
+}
+
+function renderProviderButtons(selectedProviders) {
+  const selectedSet = new Set(selectedProviders);
+  return Providers.options.map(provider => {
+    const isSelected = selectedSet.has(provider.key);
     const badge = provider.foreign ? `<span class="flag">${escapeHtml(provider.foreign)}</span>` : '';
     return `
       <label class="provider-pill${isSelected ? ' active' : ''}">
@@ -27,634 +64,281 @@ export function renderConfigurePage({
       </label>
     `;
   }).join('');
-  const indexerCards = SOURCE_OPTIONS.map(source => {
-    const isSelected = selectedSourceSet.has(source.key);
-    return `
-      <label class="indexer-card${isSelected ? ' active' : ''}" data-source-key="${escapeHtml(source.key)}">
-        <div class="indexer-head">
-          <div>
-            <span class="indexer-name">${escapeHtml(source.label)}</span>
-            <span class="indexer-description">${escapeHtml(source.description)}</span>
-          </div>
-          <span class="status-badge status-unknown" data-status-badge>${isSelected ? 'Aguardando' : 'Desativado'}</span>
-        </div>
-        <input type="checkbox" name="sources" value="${escapeHtml(source.key)}"${isSelected ? ' checked' : ''}>
-        <p class="indexer-message" data-status-message>${isSelected ? 'Aguardando a primeira verificação.' : 'Indexador desativado nesta configuração.'}</p>
-      </label>
-    `;
-  }).join('');
+}
 
+function renderIndexerCards(selectedSources, detourConfig, providerButtons) {
+  const selectedSet = new Set(selectedSources);
+  const sourceByKey = new Map(SOURCE_OPTIONS.map(source => [source.key, source]));
+  const visibleSources = [SOURCE_BETOR, SOURCE_STREMIO, SOURCE_DETOUR]
+    .map(key => sourceByKey.get(key))
+    .filter(Boolean);
+  const torrentioProviders = `
+    <details class="source-extra provider-extra">
+      <summary class="source-extra-trigger">
+        <svg class="filter-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 4h14l-5.5 6.2v4.1l-3 1.7v-5.8L3 4Z" /></svg>
+        <span class="source-extra-copy"><strong>Filtros de busca</strong><small>Providers Torrentio</small></span>
+        <svg class="source-extra-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7.5 5 5 5-5" /></svg>
+      </summary>
+      <div class="source-extra-expand"><div class="source-extra-inner">
+        <p class="indexer-description">Escolha quais providers do Torrentio podem aparecer nos resultados.</p>
+        <div class="provider-grid">${providerButtons}</div>
+      </div></div>
+    </details>
+  `;
+
+  return visibleSources.map(source => renderIndexerCard({
+    source,
+    selected: selectedSet.has(source.key)
+      || (source.key === SOURCE_DETOUR && Boolean(detourConfig.enabled)),
+    detourConfig,
+    torrentioProviders,
+  })).join('');
+}
+
+function renderHiddenSourceInputs(selectedSources = [], defaultSources = []) {
+  const visibleSourceKeys = new Set([SOURCE_BETOR, SOURCE_STREMIO, SOURCE_DETOUR]);
+  const validSourceKeys = new Set(SOURCE_OPTIONS.map(source => source.key));
+  const selectedSet = new Set(selectedSources);
+  const hiddenKeys = Array.from(new Set([...selectedSources, ...defaultSources]))
+    .filter(key => validSourceKeys.has(key) && !visibleSourceKeys.has(key));
+
+  if (!hiddenKeys.length) return '';
+  return `<div id="unlisted-source-selections" hidden>${hiddenKeys.map(key => `
+    <input type="checkbox" name="sources" value="${escapeHtml(key)}"${selectedSet.has(key) ? ' checked' : ''}>
+  `).join('')}</div>`;
+}
+
+function renderIndexerCard({ source, selected, detourConfig, torrentioProviders }) {
+  const sourceExtra = source.key === SOURCE_STREMIO
+    ? torrentioProviders
+    : (source.key === SOURCE_DETOUR ? renderDetourPanel({ detourConfig }) : '');
+  const icon = source.key === SOURCE_BETOR ? 'catalog'
+    : (source.key === SOURCE_STREMIO ? 'streaming' : 'scraper');
+  const description = source.key === SOURCE_BETOR ? 'Catálogo público'
+    : (source.key === SOURCE_STREMIO ? 'Torrentio e Torrentio Brazuca' : 'Provedores independentes');
+
+  return `
+    <article class="indexer-card" data-source-key="${escapeHtml(source.key)}">
+      <div class="indexer-main-row">
+        <div class="source-identity">
+          <label class="source-toggle" title="Habilitar ${escapeHtml(source.label)}">
+            <input type="checkbox" name="sources" value="${escapeHtml(source.key)}"${selected ? ' checked' : ''}>
+            <span class="source-switch" aria-hidden="true"><span></span></span>
+            <span class="sr-only">Habilitar ${escapeHtml(source.label)}</span>
+          </label>
+          <span class="source-icon">${renderIcon(icon)}</span>
+          <span class="source-copy">
+            <strong class="indexer-name">${escapeHtml(source.label)}</strong>
+            <small class="indexer-description">${description}</small>
+          </span>
+        </div>
+        <div class="indexer-operational" data-indexer-health="${escapeHtml(source.key)}">
+          <span class="health-dot" aria-hidden="true"></span>
+          <span class="status-badge status-${selected ? 'unknown' : 'disabled'}" data-status-badge>${selected ? 'Sem teste' : 'Desativado'}</span>
+          <span class="configuration-state" data-enabled-badge>${selected ? 'Habilitado' : 'Desabilitado'}</span>
+        </div>
+        <div class="source-metrics">
+          <div class="source-metric">
+            <strong data-average-results>—</strong>
+            <small>média / busca · 120 d</small>
+          </div>
+          <div class="source-metric">
+            <strong data-average-duration>—</strong>
+            <small>média · 120 d</small>
+          </div>
+          <div class="source-metric">
+            <strong data-last-search-age>—</strong>
+            <small>última consulta</small>
+          </div>
+        </div>
+        <details class="source-details">
+          <summary aria-label="Detalhes de ${escapeHtml(source.label)}" title="Detalhes">
+            ${renderIcon('chevron')}
+          </summary>
+          <div class="source-detail-grid">
+            <div><span>Última consulta</span><strong data-last-search-query>—</strong></div>
+            <div><span>Horário da busca</span><strong data-last-search-at>—</strong></div>
+            <div><span>Último contato</span><strong data-last-check-at>—</strong></div>
+            <div><span>Consultas válidas</span><strong data-search-successes>0</strong></div>
+            <div><span>Falhas</span><strong data-search-failures>0</strong></div>
+            <p data-status-message>${selected ? 'Ainda não houve uma consulta ou verificação.' : 'Indexador desativado nesta configuração.'}</p>
+          </div>
+        </details>
+      </div>
+      ${sourceExtra}
+    </article>
+  `;
+}
+
+function renderPageContent({ saved, baseUrl, configPath, iptvEnabled, indexerCards, hiddenSourceInputs, defaultConfiguration }) {
+  return `
+    ${renderHero(saved)}
+    <div class="layout">
+      ${renderConfigurationPanel({ baseUrl, configPath, iptvEnabled, indexerCards, hiddenSourceInputs, defaultConfiguration })}
+      ${renderEventsPanel()}
+    </div>
+  `;
+}
+
+function renderHero(saved) {
+  return `
+    <header class="hero">
+      <div class="hero-topline">
+        <div class="brand-lockup">
+          <div class="brand-copy">
+            <div class="brand-title-row">
+              <h1><a class="brand-link" href="${GITHUB_REPOSITORY_URL}" target="_blank" rel="noopener noreferrer">Torznab Bridge</a></h1>
+              <span class="version-tag">v${escapeHtml(APP_VERSION)}</span>
+            </div>
+          </div>
+        </div>
+        <button class="btn-secondary btn-verify" type="button" id="refresh-status" aria-label="Verificar fontes">
+          ${renderIcon('refresh')}<span>Verificar fontes</span>
+        </button>
+      </div>
+      ${saved ? '<div class="hero-status" role="status">Configuração salva.</div>' : ''}
+      <div class="stats" aria-label="Indicadores operacionais">
+        <div class="stat">
+          <span class="metric-icon">${renderIcon('nodes')}</span>
+          <span class="stat-copy"><strong id="stat-enabled">—</strong><span>habilitados</span></span>
+        </div>
+        <div class="stat" data-overview-health="unknown">
+          <span class="metric-icon metric-status-icon"><i></i></span>
+          <span class="stat-copy"><strong id="stat-healthy">—</strong><span>online</span><small id="stat-healthy-note">Aguardando verificação</small></span>
+        </div>
+        <div class="stat">
+          <span class="metric-icon">${renderIcon('results')}</span>
+          <span class="stat-copy"><strong id="stat-average-results">—</strong><span>resultados / consulta · 120 d</span></span>
+        </div>
+        <div class="stat">
+          <span class="metric-icon">${renderIcon('clock')}</span>
+          <span class="stat-copy"><strong id="stat-average-duration">—</strong><span>latência média · 120 d</span></span>
+        </div>
+      </div>
+      <section class="search-activity" aria-label="Atividade de consultas">
+        <div class="activity-heading">
+          <div>
+            <h2>Atividade de consultas <span>120 dias</span></h2>
+            <p id="activity-period">Histórico desde a inicialização desta instância</p>
+          </div>
+          <div class="activity-totals">
+            <span><strong id="stat-search-today">0</strong> hoje</span>
+            <span><strong id="stat-search-total">0</strong> consultas</span>
+            <span><strong id="stat-search-failures">0</strong> falhas</span>
+          </div>
+        </div>
+        <div class="activity-chart">
+          <div class="activity-grid-wrap">
+            <div class="activity-months" id="search-activity-months" aria-hidden="true"></div>
+            <div class="activity-days" id="search-activity-days" role="grid" aria-label="Consultas por dia nos últimos 120 dias"></div>
+          </div>
+          <div class="activity-tooltip" id="activity-tooltip" role="tooltip" hidden></div>
+        </div>
+        <div class="activity-footer">
+          <p id="activity-history-note">Dias anteriores ao início desta instância não têm histórico disponível.</p>
+          <div class="activity-legend" aria-label="Legenda do heatmap">
+            <span><i data-level="unknown"></i>Sem histórico</span>
+            <span><i data-level="0"></i>Sem consultas</span>
+            <span><i data-level="4"></i>Com consultas</span>
+          </div>
+        </div>
+      </section>
+    </header>
+  `;
+}
+
+function renderConfigurationPanel({ baseUrl, configPath, iptvEnabled, indexerCards, hiddenSourceInputs, defaultConfiguration }) {
+  const defaultConfigAttribute = escapeHtml(JSON.stringify(defaultConfiguration));
+  return `
+    <section class="panel configuration-panel">
+      <form method="post" action="/configure" data-default-config="${defaultConfigAttribute}">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Configuração</p>
+            <h2>Fontes de busca</h2>
+            <p class="section-copy">Habilitação e disponibilidade são indicadores separados.</p>
+          </div>
+          <div class="actions">
+            <span class="config-save-status" id="config-save-status" role="status" aria-live="polite"></span>
+            <button class="btn-secondary" type="button" id="config-reset">Restaurar padrões</button>
+          </div>
+        </div>
+        ${hiddenSourceInputs}
+        <div class="endpoint-meta">Endpoint Torznab <a href="${escapeHtml(baseUrl)}/api?t=caps"><code>${escapeHtml(baseUrl)}/api</code></a></div>
+        <div class="indexer-grid">${indexerCards}</div>
+        <div class="module-divider"><span>Televisão</span></div>
+        ${renderEmbedTvPanel({ baseUrl, enabled: iptvEnabled })}
+        <footer class="panel-footer">
+          <a href="${GITHUB_REPOSITORY_URL}" target="_blank" rel="noopener noreferrer">Código-fonte</a>
+          <span>Configuração persistida em <code>${escapeHtml(configPath || 'não configurado')}</code></span>
+        </footer>
+      </form>
+    </section>
+  `;
+}
+
+function renderEventsPanel() {
+  return `
+    <aside class="panel events-panel">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">Observabilidade</p>
+          <h2>Atividade recente</h2>
+          <p class="section-copy">Até 30 consultas, falhas e entregas.</p>
+        </div>
+      </div>
+      <div class="events" id="events">
+        <div class="event-empty">
+          ${renderIcon('activity')}
+          <strong>Nenhuma atividade nesta instância</strong>
+          <span>Os eventos são mantidos em memória e reiniciam com o serviço.</span>
+        </div>
+      </div>
+    </aside>
+  `;
+}
+
+function renderPageDocument({ styles, body }) {
   return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Torznab Bridge v${escapeHtml(APP_VERSION)}</title>
-  <style>
-    :root {
-      --bg: #07111b;
-      --panel: rgba(11, 23, 38, 0.92);
-      --panel-2: #122338;
-      --panel-3: #17304d;
-      --text: #ecf4ff;
-      --muted: #97aac5;
-      --line: rgba(255, 255, 255, 0.1);
-      --accent: #38d19a;
-      --accent-2: #138b63;
-      --warn: #f0ad4e;
-      --danger: #ff6b6b;
-      --shadow: rgba(0, 0, 0, 0.35);
-      --font-ui: "Segoe UI", system-ui, sans-serif;
-      --font-mono: "SFMono-Regular", Consolas, monospace;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      color: var(--text);
-      font-family: var(--font-ui);
-      background:
-        radial-gradient(circle at top left, rgba(56, 209, 154, 0.18), transparent 26%),
-        radial-gradient(circle at top right, rgba(89, 160, 255, 0.16), transparent 24%),
-        linear-gradient(180deg, #040b13 0%, var(--bg) 100%);
-    }
-    a { color: #9edbff; text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    code {
-      font-family: var(--font-mono);
-      color: #d9e6ff;
-      word-break: break-all;
-    }
-    .wrap {
-      width: min(1120px, calc(100% - 32px));
-      margin: 24px auto;
-      display: grid;
-      gap: 18px;
-    }
-    .hero, .panel {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 24px;
-      box-shadow: 0 22px 60px var(--shadow);
-    }
-    .hero {
-      padding: 26px 28px 22px;
-      background:
-        linear-gradient(135deg, rgba(56, 209, 154, 0.16), transparent 46%),
-        var(--panel);
-    }
-    h1 {
-      margin: 0 0 10px;
-      font-size: clamp(2rem, 3.3vw, 2.9rem);
-      letter-spacing: -0.03em;
-    }
-    .brand-link { color: inherit; }
-    .version-tag {
-      display: inline-flex;
-      vertical-align: middle;
-      align-items: center;
-      margin-left: 8px;
-      padding: 4px 9px;
-      border: 1px solid rgba(56, 209, 154, 0.45);
-      border-radius: 999px;
-      color: var(--accent);
-      font-family: var(--font-mono);
-      font-size: 0.42em;
-      font-weight: 700;
-      letter-spacing: 0;
-    }
-    h2 {
-      margin: 0;
-      font-size: 1.08rem;
-      letter-spacing: 0.01em;
-    }
-    p {
-      margin: 0;
-      line-height: 1.55;
-    }
-    .muted {
-      color: var(--muted);
-    }
-    .hero-status {
-      margin-top: 16px;
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      padding: 12px 14px;
-      border-radius: 999px;
-      border: 1px solid rgba(56, 209, 154, 0.32);
-      background: rgba(56, 209, 154, 0.1);
-    }
-    .layout {
-      display: grid;
-      grid-template-columns: 1.2fr 0.8fr;
-      gap: 18px;
-    }
-    .panel {
-      padding: 22px 24px 24px;
-    }
-    .toolbar, .footer {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      flex-wrap: wrap;
-    }
-    .toolbar {
-      margin-bottom: 18px;
-    }
-    .actions {
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
-    .meta {
-      color: var(--muted);
-      font-size: 0.94rem;
-    }
-    .section-copy {
-      margin: 8px 0 18px;
-      color: var(--muted);
-    }
-    button {
-      border: 0;
-      border-radius: 999px;
-      padding: 11px 17px;
-      font: inherit;
-      cursor: pointer;
-      transition: transform 120ms ease, opacity 120ms ease, background 120ms ease;
-    }
-    button:hover { transform: translateY(-1px); }
-    .btn-primary {
-      background: linear-gradient(135deg, var(--accent), #1eb886);
-      color: #042617;
-      font-weight: 700;
-    }
-    .btn-secondary {
-      background: var(--panel-2);
-      color: var(--text);
-      border: 1px solid var(--line);
-    }
-    .indexer-grid, .provider-grid {
-      display: grid;
-      gap: 12px;
-    }
-    .indexer-grid {
-      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-      margin-bottom: 18px;
-    }
-    .provider-grid {
-      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-    }
-    .indexer-card, .provider-pill {
-      border-radius: 18px;
-      border: 1px solid transparent;
-      background: var(--panel-2);
-      transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
-    }
-    .indexer-card {
-      display: grid;
-      gap: 14px;
-      padding: 16px;
-      cursor: pointer;
-    }
-    .provider-pill {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      min-height: 54px;
-      padding: 12px 14px;
-      cursor: pointer;
-      user-select: none;
-    }
-    .indexer-card:hover, .provider-pill:hover {
-      transform: translateY(-1px);
-    }
-    .indexer-card.active, .provider-pill.active {
-      border-color: rgba(56, 209, 154, 0.56);
-      background: linear-gradient(135deg, rgba(56, 209, 154, 0.14), rgba(18, 35, 56, 0.94));
-      box-shadow: inset 0 0 0 1px rgba(56, 209, 154, 0.16);
-    }
-    .indexer-card input, .provider-pill input {
-      width: 18px;
-      height: 18px;
-      margin: 0;
-      accent-color: var(--accent);
-    }
-    .indexer-head {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 12px;
-    }
-    .indexer-name {
-      display: block;
-      font-weight: 700;
-      margin-bottom: 4px;
-    }
-    .indexer-description, .indexer-message {
-      color: var(--muted);
-      font-size: 0.94rem;
-      line-height: 1.4;
-    }
-    .status-badge {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 102px;
-      padding: 7px 11px;
-      border-radius: 999px;
-      font-size: 0.84rem;
-      font-weight: 700;
-      border: 1px solid var(--line);
-      white-space: nowrap;
-    }
-    .status-online {
-      color: #b8ffe4;
-      background: rgba(56, 209, 154, 0.14);
-      border-color: rgba(56, 209, 154, 0.35);
-    }
-    .status-unstable {
-      color: #ffe1af;
-      background: rgba(240, 173, 78, 0.13);
-      border-color: rgba(240, 173, 78, 0.34);
-    }
-    .status-unavailable {
-      color: #ffd0d0;
-      background: rgba(255, 107, 107, 0.13);
-      border-color: rgba(255, 107, 107, 0.34);
-    }
-    .status-disabled, .status-unknown {
-      color: #d7e2f6;
-      background: rgba(255, 255, 255, 0.06);
-      border-color: rgba(255, 255, 255, 0.14);
-    }
-    .flag {
-      opacity: 0.85;
-      font-size: 0.95rem;
-    }
-    .hero-grid {
-      display: grid;
-      grid-template-columns: 1.1fr 0.9fr;
-      gap: 16px;
-      align-items: end;
-    }
-    .stats {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 12px;
-    }
-    .stat {
-      padding: 14px 16px;
-      border-radius: 18px;
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-    }
-    .stat strong {
-      display: block;
-      font-size: 1.4rem;
-      margin-bottom: 4px;
-    }
-    .events {
-      display: grid;
-      gap: 10px;
-      margin-top: 18px;
-    }
-    .event {
-      padding: 13px 14px;
-      border-radius: 16px;
-      background: var(--panel-2);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-    }
-    .event-head {
-      display: flex;
-      justify-content: space-between;
-      gap: 10px;
-      font-size: 0.9rem;
-      margin-bottom: 6px;
-    }
-    .event-kind {
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      font-size: 0.76rem;
-    }
-    .event-level-warn { border-color: rgba(240, 173, 78, 0.34); }
-    .event-level-error { border-color: rgba(255, 107, 107, 0.34); }
-    .event-empty {
-      padding: 16px;
-      border-radius: 16px;
-      background: var(--panel-2);
-      border: 1px dashed rgba(255, 255, 255, 0.12);
-      color: var(--muted);
-    }
-    .event-requester {
-      margin-top: 7px;
-      color: var(--muted);
-      font-size: 0.84rem;
-      word-break: break-word;
-    }
-    .event-releases {
-      margin-top: 9px;
-      color: var(--muted);
-      font-size: 0.88rem;
-    }
-    .event-releases summary { cursor: pointer; }
-    .event-releases ol {
-      margin: 8px 0 0;
-      padding-left: 22px;
-    }
-    .event-releases li { margin: 5px 0; }
-    @media (max-width: 900px) {
-      .layout, .hero-grid {
-        grid-template-columns: 1fr;
-      }
-    }
-    @media (max-width: 640px) {
-      .wrap {
-        width: min(100%, calc(100% - 16px));
-        margin: 8px auto 20px;
-      }
-      .hero, .panel {
-        border-radius: 18px;
-      }
-      .hero, .panel {
-        padding-left: 18px;
-        padding-right: 18px;
-      }
-      .stats {
-        grid-template-columns: 1fr;
-      }
-      .indexer-head {
-        flex-direction: column;
-      }
-    }
-  </style>
-  ${renderEmbedTvStyles()}
+  ${styles}
 </head>
 <body>
   <main class="wrap">
-    <section class="hero">
-      <div class="hero-grid">
-        <div>
-          <h1><a class="brand-link" href="${GITHUB_REPOSITORY_URL}" target="_blank" rel="noopener noreferrer">Torznab Bridge</a><span class="version-tag">v${escapeHtml(APP_VERSION)}</span></h1>
-          <p class="muted">Gerencie indexadores e providers em uma única interface. O bridge continua servindo resultados do Stremio mesmo quando o BeTor estiver temporariamente indisponível.</p>
-          ${saved ? '<div class="hero-status">Configuração salva com sucesso.</div>' : ''}
-        </div>
-        <div class="stats">
-          <div class="stat">
-            <strong id="stat-enabled">0</strong>
-            <span class="muted">Indexadores ativos</span>
-          </div>
-          <div class="stat">
-            <strong id="stat-healthy">0</strong>
-            <span class="muted">Online</span>
-          </div>
-          <div class="stat">
-            <strong id="stat-alerts">0</strong>
-            <span class="muted">Com alerta</span>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <div class="layout">
-      <section class="panel">
-        <form method="post" action="/configure">
-          <div class="toolbar">
-            <div class="meta">
-              Endpoint atual:
-              <a href="${escapeHtml(baseUrl)}/api?t=caps"><code>${escapeHtml(baseUrl)}/api</code></a>
-            </div>
-            <div class="actions">
-              <button class="btn-secondary" type="button" id="providers-all">Selecionar providers</button>
-              <button class="btn-secondary" type="button" id="providers-none">Limpar providers</button>
-              <button class="btn-primary" type="submit">Salvar configuração</button>
-            </div>
-          </div>
-
-          <h2>Indexadores</h2>
-          <p class="section-copy">Ative os indexadores desejados. O estado operacional é verificado separadamente para cada um deles.</p>
-          <div class="indexer-grid">${indexerCards}</div>
-
-          ${renderEmbedTvPanel({ baseUrl, enabled: iptvEnabled })}
-
-          <h2>Providers Torrentio</h2>
-          <p class="section-copy">Filtre os providers aceitos quando o indexador Stremio responder com múltiplas origens.</p>
-          <div class="provider-grid">${providerButtons}</div>
-
-          <div class="footer" style="margin-top: 20px;">
-            <div class="meta"><a href="${GITHUB_REPOSITORY_URL}" target="_blank" rel="noopener noreferrer">GitHub</a> · Arquivo persistido: <code>${escapeHtml(configPath || 'não configurado')}</code></div>
-            <button class="btn-primary" type="submit">Salvar configuração</button>
-          </div>
-        </form>
-      </section>
-
-      <aside class="panel">
-        <div class="toolbar">
-          <div>
-            <h2>Últimos eventos</h2>
-            <p class="section-copy">As 30 ocorrências mais recentes, incluindo cliente, falhas e torrents entregues.</p>
-          </div>
-          <button class="btn-secondary" type="button" id="refresh-status">Testar indexadores</button>
-        </div>
-        <div class="events" id="events">
-          <div class="event-empty">Aguardando os primeiros eventos do bridge.</div>
-        </div>
-      </aside>
-    </div>
+    ${body}
   </main>
-
-  <script>
-    const providerCheckboxes = Array.from(document.querySelectorAll('input[name="providers"]'));
-    const sourceCheckboxes = Array.from(document.querySelectorAll('input[name="sources"]'));
-    const iptvCheckbox = document.querySelector('input[name="iptvEnabled"]');
-
-    function escapeHtml(value) {
-      return String(value || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-    }
-
-    function syncSelections() {
-      for (const checkbox of providerCheckboxes) {
-        checkbox.closest('.provider-pill')?.classList.toggle('active', checkbox.checked);
-      }
-      for (const checkbox of sourceCheckboxes) {
-        checkbox.closest('.indexer-card')?.classList.toggle('active', checkbox.checked);
-      }
-      document.querySelector('[data-iptv-panel]')?.classList.toggle('active', Boolean(iptvCheckbox?.checked));
-    }
-
-    function applyStatusSnapshot(payload) {
-      const indexers = Array.isArray(payload?.indexers) ? payload.indexers : [];
-      const events = Array.isArray(payload?.events) ? payload.events : [];
-      let enabled = 0;
-      let healthy = 0;
-      let alerts = 0;
-
-      for (const indexer of indexers) {
-        const card = document.querySelector('[data-source-key="' + indexer.key + '"]');
-        if (!card) {
-          continue;
-        }
-
-        const badge = card.querySelector('[data-status-badge]');
-        const message = card.querySelector('[data-status-message]');
-        card.classList.toggle('active', Boolean(indexer.enabled));
-
-        if (badge) {
-          badge.textContent = indexer.statusLabel || 'Aguardando';
-          badge.className = 'status-badge status-' + (indexer.status || 'unknown');
-        }
-        if (message) {
-          message.textContent = indexer.message || 'Sem detalhes adicionais.';
-        }
-
-        if (indexer.enabled) {
-          enabled += 1;
-        }
-        if (indexer.status === 'online') {
-          healthy += 1;
-        }
-        if (indexer.status === 'unstable' || indexer.status === 'unavailable') {
-          alerts += 1;
-        }
-      }
-
-      document.getElementById('stat-enabled').textContent = String(enabled);
-      document.getElementById('stat-healthy').textContent = String(healthy);
-      document.getElementById('stat-alerts').textContent = String(alerts);
-
-      applyIptvStatus(payload?.iptv);
-
-      const eventsNode = document.getElementById('events');
-      if (!events.length) {
-        eventsNode.innerHTML = '<div class="event-empty">Aguardando os primeiros eventos do bridge.</div>';
-        return;
-      }
-
-      eventsNode.innerHTML = events.map(event => {
-        const timestamp = new Date(event.timestamp || Date.now()).toLocaleString('pt-BR');
-        const levelClass = event.level ? 'event-level-' + event.level : '';
-        const source = event.source ? ' · ' + escapeHtml(event.source) : '';
-        const requester = event.requester?.label
-          ? '<div class="event-requester">Cliente: ' + escapeHtml(event.requester.label) +
-            ' · ' + escapeHtml(event.requester.userAgent || '') + '</div>'
-          : '';
-        const releases = Array.isArray(event.releases) ? event.releases : [];
-        const releaseList = releases.length
-          ? '<details class="event-releases"><summary>' + releases.length + ' torrent(s)</summary><ol>' +
-            releases.map(release => '<li>' + escapeHtml(release.title || 'Sem título') +
-              ' · ' + escapeHtml(release.source || 'fonte desconhecida') +
-              ' · ' + escapeHtml(release.provider || 'provider desconhecido') +
-              (release.infoHash ? ' · ' + escapeHtml(release.infoHash) : '') + '</li>').join('') +
-            '</ol></details>'
-          : '';
-        return '<article class="event ' + levelClass + '">' +
-          '<div class="event-head">' +
-            '<span class="event-kind">' + escapeHtml(event.kind || 'evento') + source + '</span>' +
-            '<span class="muted">' + escapeHtml(timestamp) + '</span>' +
-          '</div>' +
-          '<p>' + escapeHtml(event.message || 'Sem mensagem') + '</p>' +
-          requester +
-          releaseList +
-        '</article>';
-      }).join('');
-    }
-
-    function applyIptvStatus(iptv) {
-      if (!iptv) {
-        return;
-      }
-      const badge = document.querySelector('[data-iptv-status-badge]');
-      const message = document.querySelector('[data-iptv-status-message]');
-      if (badge) {
-        badge.textContent = iptv.statusLabel || 'Aguardando';
-        badge.className = 'status-badge status-' + (iptv.status || 'unknown');
-      }
-      if (message) {
-        message.textContent = iptv.message || 'Sem detalhes adicionais.';
-      }
-      const input = document.querySelector('input[name="iptvEnabled"]');
-      if (input && typeof iptv.enabled === 'boolean') {
-        input.checked = iptv.enabled;
-      }
-      const channels = document.querySelector('[data-iptv-channels]');
-      const events = document.querySelector('[data-iptv-events]');
-      const cache = document.querySelector('[data-iptv-cache]');
-      const resolution = document.querySelector('[data-iptv-resolution]');
-      const upstream = document.querySelector('[data-iptv-upstream]');
-      const catalogAt = document.querySelector('[data-iptv-catalog-at]');
-      const failure = document.querySelector('[data-iptv-last-failure]');
-      if (channels) channels.textContent = String(iptv.channelCount ?? '—');
-      if (events) events.textContent = String(iptv.eventCount ?? '—');
-      if (cache) cache.textContent = formatAge(iptv.cacheAgeMs);
-      if (resolution) resolution.textContent = iptv.lastResolutionAt || iptv.lastTestAt ? new Date(iptv.lastResolutionAt || iptv.lastTestAt).toLocaleString('pt-BR') : '—';
-      if (upstream) upstream.textContent = iptv.upstream || 'não testado';
-      if (catalogAt) catalogAt.textContent = iptv.catalogCachedAt ? new Date(iptv.catalogCachedAt).toLocaleString('pt-BR') : 'não atualizado';
-      if (failure) failure.textContent = iptv.lastFailure?.message || 'nenhuma';
-    }
-
-    function formatAge(value) {
-      if (!Number.isFinite(Number(value))) return '—';
-      const seconds = Math.max(0, Math.round(Number(value) / 1000));
-      if (seconds < 60) return seconds + 's';
-      if (seconds < 3600) return Math.round(seconds / 60) + 'min';
-      return Math.round(seconds / 3600) + 'h';
-    }
-
-    async function refreshStatus(probe = false) {
-      try {
-        const response = await fetch(probe ? '/status?probe=1' : '/status', { cache: 'no-store' });
-        if (!response.ok) {
-          throw new Error('Falha ao buscar o status.');
-        }
-        const payload = await response.json();
-        applyStatusSnapshot(payload);
-      } catch (error) {
-        const eventsNode = document.getElementById('events');
-        eventsNode.innerHTML = '<div class="event event-level-error"><div class="event-head"><span class="event-kind">status</span><span class="muted">agora</span></div><p>' + escapeHtml(error.message || 'Falha ao carregar status.') + '</p></div>';
-      }
-    }
-
-    document.getElementById('providers-all')?.addEventListener('click', () => {
-      for (const checkbox of providerCheckboxes) {
-        checkbox.checked = true;
-      }
-      syncSelections();
-    });
-
-    document.getElementById('providers-none')?.addEventListener('click', () => {
-      for (const checkbox of providerCheckboxes) {
-        checkbox.checked = false;
-      }
-      syncSelections();
-    });
-
-    document.getElementById('refresh-status')?.addEventListener('click', () => refreshStatus(true));
-    document.getElementById('refresh-iptv-status')?.addEventListener('click', () => refreshStatus(true));
-
-    for (const checkbox of [...providerCheckboxes, ...sourceCheckboxes, ...(iptvCheckbox ? [iptvCheckbox] : [])]) {
-      checkbox.addEventListener('change', syncSelections);
-    }
-
-    syncSelections();
-    refreshStatus();
-    window.setInterval(() => refreshStatus(false), 30000);
-  </script>
+  ${CONFIGURE_PAGE_ACTIVITY_CLIENT_SCRIPT}
+  ${CONFIGURE_PAGE_EVENTS_CLIENT_SCRIPT}
+  ${CONFIGURE_PAGE_CLIENT_SCRIPT}
 </body>
 </html>`;
 }
 
+function renderIcon(name) {
+  const paths = {
+    bridge: '<path d="M4 19V9l8-5 8 5v10M4 11h16M8 19v-5h8v5M2 19h20" />',
+    catalog: '<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5zM4 5.5v15M8 7h8M8 11h7" />',
+    streaming: '<circle cx="12" cy="12" r="9"/><path d="m10 8 6 4-6 4z" />',
+    scraper: '<path d="M4 4h6M4 4v6M20 4h-6M20 4v6M4 20h6M4 20v-6M20 20h-6M20 20v-6M8 12h8" />',
+    nodes: '<circle cx="6" cy="7" r="2"/><circle cx="18" cy="7" r="2"/><circle cx="12" cy="17" r="2"/><path d="m8 8 2.7 6.9M16 8l-2.7 6.9M8 7h8" />',
+    results: '<path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01" />',
+    clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2" />',
+    refresh: '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 9A7 7 0 0 1 18 6l2 2M4 16l2 2a7 7 0 0 0 12.4-3" />',
+    activity: '<path d="M3 12h4l3-8 4 16 3-8h4" />',
+    chevron: '<path d="m8 10 4 4 4-4" />',
+  };
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.activity}</svg>`;
+}
+
 function escapeHtml(value) {
   return `${value || ''}`
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }

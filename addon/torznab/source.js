@@ -1,6 +1,7 @@
 export const SOURCE_DATABASE = 'database';
 export const SOURCE_STREMIO = 'stremio';
 export const SOURCE_BETOR = 'betor';
+export const SOURCE_DETOUR = 'detour';
 
 export const SOURCE_OPTIONS = [
   {
@@ -10,13 +11,18 @@ export const SOURCE_OPTIONS = [
   },
   {
     key: SOURCE_STREMIO,
-    label: 'Stremio',
-    description: 'Consulta os streams do addon Torrentio/Torrentio Brazuca.',
+    label: 'Torrentio',
+    description: 'Consulta os addons Torrentio e Torrentio Brazuca.',
   },
   {
     key: SOURCE_DATABASE,
     label: 'Database',
     description: 'Usa tabelas torrents/files compatíveis com o schema do Torrentio.',
+  },
+  {
+    key: SOURCE_DETOUR,
+    label: 'Scraper',
+    description: 'Busca direta em provedores independentes, com cache e isolamento de falhas.',
   },
 ];
 

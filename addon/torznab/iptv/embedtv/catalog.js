@@ -105,7 +105,7 @@ export function associateEvents(events, channels) {
 export function extractEmbedTvChannelId(playerUrl) {
   try {
     const parsed = new URL(playerUrl);
-    if (parsed.protocol !== 'https:' || !parsed.hostname.endsWith('.embedtv.lat')) {
+    if (!isEmbedTvPageUrl(parsed.href)) {
       return undefined;
     }
     const parts = parsed.pathname.split('/').filter(Boolean);

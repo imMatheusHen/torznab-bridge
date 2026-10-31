@@ -227,10 +227,19 @@ export function isEmbedTvPageUrl(url, baseUrl = getEmbedTvBaseUrl()) {
     return candidate.protocol === 'https:'
       && !candidate.username
       && !candidate.password
-      && (candidate.hostname === base.hostname || candidate.hostname.endsWith(`.${base.hostname}`));
+      && (
+        isHostOrSubdomain(candidate.hostname, base.hostname)
+        || ['embedtv.cc', 'embedtv.lat'].some(host => isHostOrSubdomain(candidate.hostname, host))
+      );
   } catch {
     return false;
   }
+}
+
+function isHostOrSubdomain(hostname, domain) {
+  const candidate = hostname.toLowerCase().replace(/\.$/, '');
+  const base = domain.toLowerCase().replace(/\.$/, '');
+  return candidate === base || candidate.endsWith(`.${base}`);
 }
 
 export function isSafeUpstreamUrl(url) {

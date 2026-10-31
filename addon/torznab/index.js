@@ -32,21 +32,32 @@ import {
   searchBetorReleaseRows,
 } from './betor.js';
 import {
+  searchDetourReleaseRows,
+  getDetourReleaseRowByGuid,
+  probeDetourProvider,
+  getDetourRuntimeStatus,
+  isTemporaryDetourError,
+  DETOUR_SOURCE,
+} from './detour/index.js';
+import { buildDetourSearchOptions } from './detour/query.js';
+import {
   getSourceMode,
   SOURCE_BETOR,
   SOURCE_DATABASE,
   SOURCE_STREMIO,
+  SOURCE_DETOUR,
 } from './source.js';
 import {
   buildStatusSnapshot,
   recordConfigurationSaved,
   recordDownloadEvent,
   recordSearchEvent,
+  recordSourceSearch,
   recordSourceFailure,
   recordSourceSuccess,
 } from './monitor.js';
 import { renderConfigurePage } from './configurePage.js';
-import { getRuntimeConfigPath, saveRuntimeConfig } from './runtimeConfig.js';
+import { getDefaultRuntimeConfiguration, getRuntimeConfigPath, saveRuntimeConfig } from './runtimeConfig.js';
 import { createEmbedTvRouter, createEmbedTvService } from './iptv/embedtv/index.js';
 
 const PORT = parseInt(process.env.PORT || process.env.TORZNAB_PORT || '9699', 10);
@@ -56,6 +67,10 @@ const API_KEY = process.env.TORZNAB_API_KEY;
 const LOG_REQUESTS = process.env.TORZNAB_LOG_REQUESTS === '1';
 const BETOR_FALLBACK_DELAY_MS = parseInt(process.env.TORZNAB_BETOR_FALLBACK_DELAY_MS || '2500', 10);
 const DELIVERED_RELEASE_TTL_MS = parseInt(process.env.TORZNAB_RELEASE_CACHE_TTL_MS || `${60 * 60 * 1000}`, 10);
+const SOURCE_HEALTH_PROBE_COOLDOWN_MS = 60 * 1000;
+let sourceHealthProbeInFlight;
+let lastSourceHealthProbeAt = 0;
+let lastSourceHealthProbeKey = '';
 const deliveredReleaseCache = new Map();
 const embedTvService = createEmbedTvService();
 
@@ -82,8 +97,9 @@ app.get('/health', async (_, res) => {
   const snapshot = await buildRuntimeStatus();
   const response = {
     ok: true,
-    dependenciesOk: snapshot.ok,
-    degraded: snapshot.degraded || !snapshot.ok,
+    dependenciesOk: snapshot.health.dependenciesOk,
+    dependencyStatus: snapshot.health.status,
+    degraded: snapshot.degraded,
     service: 'torznab-bridge',
     source: getSourceMode(),
     sources: getActiveSources(),
@@ -93,9 +109,21 @@ app.get('/health', async (_, res) => {
     betor: snapshot.betor,
     stremio: snapshot.stremio,
     iptv: snapshot.iptv,
+    detour: snapshot.detour,
   };
 
   res.json(response);
+});
+
+app.post('/detour/probe/:provider', async (req, res) => {
+  try {
+    const providerId = req.params.provider;
+    const query = req.query.q || 'interestelar';
+    const result = await probeDetourProvider(providerId, query);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
 });
 
 app.get('/download/:guid', async (req, res) => {
@@ -144,7 +172,8 @@ app.post('/configure', (req, res) => {
   const providers = normalizeProviderSelection(req.body?.providers);
   const sources = normalizeProviderSelection(req.body?.sources);
   const iptv = normalizeIptvSelection(req.body?.iptvEnabled);
-  saveRuntimeConfig({ providers, sources, iptv });
+  const detour = normalizeDetourSelection(sources.includes(SOURCE_DETOUR), req.body?.detourProviders);
+  saveRuntimeConfig({ providers, sources, iptv, detour });
   recordConfigurationSaved({ providers, sources });
   res.redirect(303, '/configure?saved=1');
 });
@@ -167,6 +196,7 @@ async function handleApiRequest(req, res) {
 
   const action = `${req.query.t || ''}`.toLowerCase();
   const baseUrl = getRequestBaseUrl(req);
+  let searchStartedAt;
 
   try {
     if (action === 'caps') {
@@ -179,39 +209,71 @@ async function handleApiRequest(req, res) {
       return;
     }
 
-    const rows = await searchReleaseRows(buildSearchOptions(action, req.query));
+    searchStartedAt = Date.now();
+    const searchOptions = buildSearchOptions(action, req.query);
+    const rows = await searchReleaseRows(searchOptions);
     cacheDeliveredRows(rows);
     const items = rows.map(row => toTorznabItem(row, baseUrl));
     const channelTitle = buildChannelTitle(action, req.query);
+    res.type('application/xml').send(buildRssXml(channelTitle, items));
     recordSearchEvent({
       action,
       query: req.query,
       count: items.length,
       requester: buildRequester(req),
       releases: rows,
+      durationMs: Date.now() - searchStartedAt,
+      limit: searchOptions.limit,
+      searchBreakdown: rows.searchBreakdown,
     });
-    res.type('application/xml').send(buildRssXml(channelTitle, items));
   } catch (error) {
+    if (searchStartedAt !== undefined) {
+      recordSearchEvent({
+        action,
+        query: req.query,
+        count: 0,
+        requester: buildRequester(req),
+        durationMs: Date.now() - searchStartedAt,
+        outcome: 'failure',
+      });
+    }
     console.error('Torznab Bridge request failed', error);
     res.status(500).type('application/xml').send(buildErrorXml(500, 'Internal adapter error'));
   }
 }
 
 async function handleStatusRequest(req, res) {
+  const probeDetour = req.query.probe_detour;
+  if (probeDetour) {
+    const probeResult = await probeDetourProvider(probeDetour, req.query.q || 'interestelar');
+    res.json({
+      service: 'torznab-bridge',
+      probe: probeResult,
+      detour: getDetourRuntimeStatus(),
+    });
+    return;
+  }
+
+  const legacyProbe = req.query.probe === '1';
   const snapshot = await buildRuntimeStatus({
-    probeSources: req.query.probe === '1',
-    probeIptv: req.query.probe === '1',
+    probeSources: legacyProbe || req.query.probe_sources === '1',
+    probeIptv: legacyProbe || req.query.probe_iptv === '1',
+    probeDetour: legacyProbe,
   });
   res.json({
     service: 'torznab-bridge',
     ok: snapshot.ok,
     degraded: snapshot.degraded,
+    health: snapshot.health,
+    probe: snapshot.sourceProbe,
     sources: getActiveSources(),
     indexers: snapshot.indexers,
     events: snapshot.events,
+    activity: snapshot.activity,
     betor: snapshot.betor,
     stremio: snapshot.stremio,
     iptv: snapshot.iptv,
+    detour: snapshot.detour,
   });
 }
 
@@ -258,6 +320,7 @@ function buildSearchOptions(action, query) {
     types,
     imdbId,
     query: normalizeTextQuery(action, query),
+    year: query.year,
     season,
     episode,
     categories,
@@ -273,14 +336,25 @@ async function searchReleaseRows(options) {
   const allowedProviders = buildAllowedProviderSet(options.providers);
   const resultsBySource = new Map();
 
+  let betorRows = [];
   if (orderedSources.includes(SOURCE_BETOR)) {
-    const betorRows = await searchWithBetorPrimary(options, orderedSources, resultsBySource);
+    betorRows = await searchWithBetorPrimary(options, orderedSources, resultsBySource);
     resultsBySource.set(SOURCE_BETOR, betorRows);
   }
 
   const remainingSources = orderedSources.filter(source => !resultsBySource.has(source));
   if (remainingSources.length) {
-    const sourceRows = await Promise.all(remainingSources.map(source => searchSourceRowsTolerantly(source, options)));
+    const detourOptions = buildDetourSearchOptions(options, betorRows);
+    const sourceRows = await Promise.all(remainingSources.map(source => {
+      if (source === SOURCE_DETOUR && !detourOptions) {
+        console.info('[search:detour] Busca ignorada: não foi possível resolver um título textual confiável.');
+        return [];
+      }
+      return searchSourceRowsTolerantly(
+        source,
+        source === SOURCE_DETOUR ? detourOptions : options,
+      );
+    }));
     sourceRows.forEach((rows, index) => {
       resultsBySource.set(remainingSources[index], rows);
     });
@@ -328,7 +402,7 @@ async function getReleaseByGuid(guid) {
   if (!row) {
     return undefined;
   }
-  if (parsedGuid.source === SOURCE_BETOR) {
+  if (parsedGuid.source === SOURCE_BETOR || parsedGuid.source === SOURCE_DETOUR) {
     return row;
   }
   if (allowedProviders.size && !allowedProviders.has(normalizeProviderName(row.provider))) {
@@ -384,6 +458,13 @@ function normalizeIptvSelection(rawValue) {
   return { enabled: rawValue === '1' || rawValue === true };
 }
 
+function normalizeDetourSelection(rawEnabled, rawProviders) {
+  return {
+    enabled: rawEnabled === '1' || rawEnabled === true,
+    providers: normalizeProviderSelection(rawProviders),
+  };
+}
+
 function buildAllowedProviderSet(providers = []) {
   const normalizedProviders = Array.isArray(providers)
     ? providers.map(normalizeProviderName).filter(Boolean)
@@ -396,16 +477,27 @@ function renderProviderUi(req, res) {
   const adapterConfig = getAdapterConfiguration();
   res.type('html').send(renderConfigurePage({
     selectedProviders: adapterConfig.providers || [],
-    selectedSources: adapterConfig.sources || [],
+    selectedSources: getConfiguredSourcesForUi(adapterConfig),
     iptvEnabled: adapterConfig.iptv?.enabled !== false,
+    detourConfig: adapterConfig.detour,
     baseUrl: getRequestBaseUrl(req).replace(/\/$/, ''),
     saved: req.query.saved === '1',
     configPath: getRuntimeConfigPath(),
+    defaultConfiguration: getDefaultRuntimeConfiguration(),
   }));
 }
 
+function getConfiguredSourcesForUi(adapterConfig = getAdapterConfiguration()) {
+  const sources = [...(adapterConfig.sources || [])];
+  if (adapterConfig.detour?.enabled && !sources.includes(SOURCE_DETOUR)) {
+    sources.push(SOURCE_DETOUR);
+  }
+  return sources;
+}
+
 function getActiveSources() {
-  const configuredSources = getAdapterConfiguration().sources || [];
+  const adapterConfig = getAdapterConfiguration();
+  const configuredSources = getConfiguredSourcesForUi(adapterConfig);
   return configuredSources.length ? configuredSources : [getSourceMode()];
 }
 
@@ -415,6 +507,9 @@ async function searchSourceRows(source, options) {
   }
   if (source === SOURCE_BETOR) {
     return searchBetorReleaseRows(options);
+  }
+  if (source === SOURCE_DETOUR) {
+    return searchDetourReleaseRows(options);
   }
   if (source === SOURCE_DATABASE) {
     const rows = await searchReleaseRowsDb(options);
@@ -434,6 +529,9 @@ async function getReleaseBySourceGuid(parsedGuid) {
   if (parsedGuid.source === SOURCE_BETOR) {
     return getBetorReleaseRowByGuid(normalizedGuid);
   }
+  if (parsedGuid.source === SOURCE_DETOUR) {
+    return getDetourReleaseRowByGuid(normalizedGuid);
+  }
   if (parsedGuid.source === SOURCE_DATABASE) {
     return getDatabaseReleaseByGuid(normalizedGuid);
   }
@@ -441,6 +539,9 @@ async function getReleaseBySourceGuid(parsedGuid) {
 }
 
 async function checkSourceHealth(source) {
+  if (source === SOURCE_DETOUR) {
+    return { source, ok: null, skipped: 'no independent lightweight health check' };
+  }
   try {
     if (source === SOURCE_STREMIO) {
       await checkStremioHealth();
@@ -460,21 +561,66 @@ async function checkSourceHealth(source) {
   }
 }
 
-async function buildRuntimeStatus({ probeSources = false, probeIptv = false } = {}) {
-  const sources = getActiveSources();
-  const probes = [];
-  if (probeSources) {
-    probes.push(Promise.all(sources.map(checkSourceHealth)));
+async function runSourceHealthProbes(sources) {
+  const probeableSources = sources.filter(source => source !== SOURCE_DETOUR);
+  const probeKey = [...probeableSources].sort().join(',');
+  const now = Date.now();
+  if (sourceHealthProbeInFlight) return sourceHealthProbeInFlight;
+  if (lastSourceHealthProbeAt > 0 && now - lastSourceHealthProbeAt < SOURCE_HEALTH_PROBE_COOLDOWN_MS) {
+    return {
+      state: 'cooldown',
+      checkedAt: new Date(lastSourceHealthProbeAt).toISOString(),
+      retryAfterMs: SOURCE_HEALTH_PROBE_COOLDOWN_MS - (now - lastSourceHealthProbeAt),
+      sources: lastSourceHealthProbeKey ? lastSourceHealthProbeKey.split(',') : [],
+      results: [],
+    };
   }
+
+  lastSourceHealthProbeAt = now;
+  lastSourceHealthProbeKey = probeKey;
+  sourceHealthProbeInFlight = runWithConcurrency(probeableSources, 2, checkSourceHealth)
+    .then(results => ({ state: 'completed', checkedAt: new Date().toISOString(), results }))
+    .finally(() => { sourceHealthProbeInFlight = undefined; });
+  return sourceHealthProbeInFlight;
+}
+
+async function runWithConcurrency(items, limit, worker) {
+  const queue = [...items];
+  const results = [];
+  const workers = Array.from({ length: Math.min(limit, queue.length) }, async () => {
+    while (queue.length) {
+      results.push(await worker(queue.shift()));
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+async function buildRuntimeStatus({ probeSources = false, probeIptv = false, probeDetour = false } = {}) {
+  const sources = getActiveSources();
+  const sourceProbe = probeSources ? runSourceHealthProbes(sources) : undefined;
+  const probes = [];
+  if (sourceProbe) probes.push(sourceProbe);
   if (probeIptv && isEmbedTvEnabled()) {
     probes.push(embedTvService.probe());
   }
-  await Promise.all(probes);
+  if (probeDetour && isDetourEnabled()) {
+    probes.push(probeDetourProvider());
+  }
+  const [sourceProbeResult] = await Promise.all(probes);
+  const detour = getDetourRuntimeStatus();
+  const sourceStatusOverrides = sources.includes(SOURCE_DETOUR)
+    ? { [SOURCE_DETOUR]: { status: detour.status, message: detour.message, lastCheckAt: detour.lastCheckAt } }
+    : {};
+  const snapshot = buildStatusSnapshot(sources, { sourceStatusOverrides });
+
   return {
-    ...buildStatusSnapshot(sources),
+    ...snapshot,
+    sourceProbe: sourceProbeResult,
     betor: getBetorRuntimeStatus(),
     stremio: getStremioRuntimeStatus(),
     iptv: embedTvService.getStatus({ enabled: isEmbedTvEnabled() }),
+    detour,
   };
 }
 
@@ -482,9 +628,17 @@ function isEmbedTvEnabled() {
   return getAdapterConfiguration().iptv?.enabled !== false;
 }
 
+function isDetourEnabled() {
+  const config = getAdapterConfiguration();
+  return Boolean(config.detour?.enabled || config.sources?.includes(SOURCE_DETOUR));
+}
+
 function isTemporarySourceError(source, error) {
   if (source === SOURCE_BETOR) {
     return isTemporaryBetorError(error);
+  }
+  if (source === SOURCE_DETOUR) {
+    return isTemporaryDetourError(error);
   }
   if (source === SOURCE_STREMIO && isTemporaryStremioError(error)) {
     return true;
@@ -500,8 +654,11 @@ function getSourceLabel(source) {
   if (source === SOURCE_BETOR) {
     return 'BeTor';
   }
+  if (source === SOURCE_DETOUR) {
+    return 'Scraper';
+  }
   if (source === SOURCE_STREMIO) {
-    return 'Stremio';
+    return 'Torrentio';
   }
   if (source === SOURCE_DATABASE) {
     return 'Database';
@@ -562,13 +719,41 @@ async function searchSourceRowsSafely(source, options) {
   const startedAt = Date.now();
   try {
     const rows = await searchSourceRows(source, options);
-    recordSourceSuccess(source, {
-      kind: 'search',
-      message: `${getSourceLabel(source)} respondeu à busca normalmente.`,
+    const durationMs = Date.now() - startedAt;
+    const observation = rows.searchObservation || { outcome: 'success' };
+    recordSourceSearch(source, {
+      query: options.query || options.imdbId || 'Consulta geral',
+      imdbId: options.imdbId,
+      year: options.year,
+      count: rows.length,
+      durationMs: observation.outcome === 'inconclusive' ? undefined : durationMs,
+      outcome: observation.outcome,
     });
-    console.log(`[search:${source}] Busca concluida em ${Date.now() - startedAt}ms com ${rows.length} resultado(s).`);
+    if (observation.outcome === 'success') {
+      recordSourceSuccess(source, {
+        kind: 'search',
+        message: `${getSourceLabel(source)} respondeu à busca normalmente.`,
+      });
+    } else if (observation.outcome === 'failure') {
+      const error = Object.assign(new Error(observation.message || 'Todos os provedores Scraper falharam.'), {
+        code: 'DETOUR_SEARCH_FAILED',
+        source: SOURCE_DETOUR,
+        temporary: true,
+      });
+      recordSourceFailure(source, error, { kind: 'search', temporary: true });
+    }
+    console.log(`[search:${source}] Busca concluida em ${durationMs}ms com ${rows.length} resultado(s) (${observation.outcome}).`);
     return rows;
   } catch (error) {
+    const durationMs = Date.now() - startedAt;
+    recordSourceSearch(source, {
+      query: options.query || options.imdbId || 'Consulta geral',
+      imdbId: options.imdbId,
+      year: options.year,
+      count: 0,
+      durationMs,
+      outcome: 'failure',
+    });
     const temporary = isTemporarySourceError(source, error);
     const message = recordSourceFailure(source, error, { kind: 'search', temporary });
     console.error(`[search:${source}] ${message}`);
@@ -592,26 +777,43 @@ async function searchSourceRowsTolerantly(source, options) {
 function mergeRowsInSourceOrder(orderedSources, resultsBySource, limit, allowedProviders = new Set()) {
   const mergedRows = [];
   const seenKeys = new Set();
+  const returnedBySource = new Map();
+  let reachedLimit = false;
 
   for (const source of orderedSources) {
     const rows = resultsBySource.get(source) || [];
     for (const row of rows) {
-      if (allowedProviders.size && !allowedProviders.has(normalizeProviderName(row.provider))) {
+      if (source !== SOURCE_DETOUR && allowedProviders.size && !allowedProviders.has(normalizeProviderName(row.provider))) {
         continue;
       }
 
-      const dedupeKey = `${row.infoHash}:${row.fileIndex || 0}`;
-      if (seenKeys.has(dedupeKey)) {
-        continue;
-      }
+      const dedupeKey = String(row.infoHash) + ':' + String(row.fileIndex || 0);
+      if (seenKeys.has(dedupeKey)) continue;
       seenKeys.add(dedupeKey);
       mergedRows.push(row);
+      returnedBySource.set(source, (returnedBySource.get(source) || 0) + 1);
       if (mergedRows.length >= limit) {
-        return mergedRows;
+        reachedLimit = true;
+        break;
       }
     }
+    if (reachedLimit) break;
   }
 
+  const searchBreakdown = orderedSources.map(source => {
+    const sourceRows = resultsBySource.get(source) || [];
+    const providers = sourceRows.searchDiagnostics?.providers;
+    return {
+      source,
+      candidateCount: sourceRows.length,
+      returnedCount: returnedBySource.get(source) || 0,
+      ...(Array.isArray(providers) ? { providers } : {}),
+    };
+  });
+  Object.defineProperty(mergedRows, 'searchBreakdown', {
+    value: searchBreakdown,
+    enumerable: false,
+  });
   return mergedRows;
 }
 
@@ -628,6 +830,9 @@ function buildEffectiveSourceOrder(activeSources) {
   const orderedSources = [];
   if (activeSources.includes(SOURCE_BETOR)) {
     orderedSources.push(SOURCE_BETOR);
+  }
+  if (activeSources.includes(SOURCE_DETOUR)) {
+    orderedSources.push(SOURCE_DETOUR);
   }
   if (activeSources.includes(SOURCE_STREMIO)) {
     orderedSources.push(SOURCE_STREMIO);
