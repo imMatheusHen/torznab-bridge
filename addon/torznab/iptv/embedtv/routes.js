@@ -93,7 +93,7 @@ export function createEmbedTvRouter({
     }
   });
 
-  router.get('/channel/:id/hls', async (req, res) => {
+  const handleProxyResource = async (req, res) => {
     if (!ensureEnabled(isEnabled, res)) return;
     const channelId = validateChannelId(req.params.id);
     const target = decodeProxyTarget(`${req.query.u || ''}`);
@@ -117,7 +117,12 @@ export function createEmbedTvRouter({
     } catch (error) {
       sendError(res, error);
     }
-  });
+  };
+
+  // Keep the extensionless route for clients that already received it from a
+  // cached manifest, while new manifests use hls.ts for FFmpeg compatibility.
+  router.get('/channel/:id/hls.ts', handleProxyResource);
+  router.get('/channel/:id/hls', handleProxyResource);
 
   return router;
 }

@@ -155,21 +155,32 @@ export function parseSizeToBytes(rawSize) {
 
 function buildReleaseTitle(row, parsedTorrent, parsedFile) {
   const parts = [];
-  const fileName = row.fileTitle || row.torrentTitle || row.infoHash;
+  // The torrent name is the provider's release identity. A page's canonical
+  // title can be the search query itself (for example S02E01), while the
+  // file metadata belongs to a different episode (for example S02E10).
+  // Preserve the torrent name first and use the file name only when it is the
+  // only usable source title. Canonical titles are a fallback, never a source
+  // for replacing release identity.
+  const torrentName = usableReleaseName(row.torrentTitle, row.infoHash);
+  const fileName = usableReleaseName(row.fileTitle, row.infoHash) || torrentName || row.infoHash;
+  const sourceName = torrentName || fileName;
   const canonicalName = buildCanonicalReleaseName(row, parsedTorrent, parsedFile);
-  parts.push(canonicalName || fileName);
+  parts.push(sourceName || canonicalName || row.infoHash);
   const quality = parsedFile.resolution || parsedTorrent.resolution || row.resolution;
-  if (quality && !(canonicalName || fileName).includes(quality)) {
+  if (quality && !(sourceName || canonicalName || fileName).includes(quality)) {
     parts.push(quality);
   }
   const source = parsedFile.source || parsedTorrent.source;
-  if (source && !(canonicalName || fileName).toLowerCase().includes(`${source}`.toLowerCase())) {
+  if (source && !(sourceName || canonicalName || fileName).toLowerCase().includes(`${source}`.toLowerCase())) {
     parts.push(source);
   }
-  if (row.provider && !(canonicalName || fileName).includes(row.provider)) {
-    parts.push(row.provider);
-  }
   return parts.join(' - ');
+}
+
+function usableReleaseName(value, infoHash) {
+  const normalized = `${value || ''}`.replace(/\s+/g, ' ').trim();
+  if (!normalized || normalized.toLowerCase() === `${infoHash || ''}`.toLowerCase()) return '';
+  return normalized;
 }
 
 function buildCanonicalReleaseName(row, parsedTorrent, parsedFile) {
@@ -238,7 +249,8 @@ function buildTorznabAttributes(row, categories, magnetUrl, parsedTorrent, parse
     ['imdb', row.imdbId?.replace(/^tt/i, '')],
     ['season', row.imdbSeason],
     ['episode', row.isSeasonPack ? undefined : row.imdbEpisode],
-    ['files', row.packFileCount || 1],
+    ['files', Number.isInteger(row.packFileCount) && row.packFileCount > 0 ? row.packFileCount : undefined],
+    ['provider', row.provider],
   ];
 
   const codec = parsedFile.codec || parsedTorrent.codec;

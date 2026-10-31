@@ -80,10 +80,14 @@ deve ser usado para baixar ou arquivar streams completas.
 Consulte a API de catálogo primeiro:
 
 ```text
-GET https://embedtv.lat/api/channels
-GET https://embedtv.lat/api/epg_all
-GET https://embedtv.lat/api/events
+GET https://embedtv.cc/api/channels
+GET https://embedtv.cc/api/epg_all
+GET https://embedtv.cc/api/events
 ```
+
+O runtime usa .cc como origem canônica; .lat é um alias legado que hoje
+redireciona para .cc. URLs de páginas podem usar subdomínios HTTPS de ambos os
+domínios.
 
 O catálogo pode conter ID, nome, imagem, categorias e URL da página, mas o
 manifesto precisa ser descoberto na página do canal. Analise HTML e scripts

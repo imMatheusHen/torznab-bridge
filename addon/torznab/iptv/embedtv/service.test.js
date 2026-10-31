@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { EmbedTvError } from './client.js';
 import { EmbedTvService } from './service.js';
+import { decodeProxyTarget } from './hls.js';
 
 class FakeClient {
   constructor() {
@@ -94,6 +95,37 @@ test('invalidates a failed resolution and retries once with a fresh page', async
   assert.equal(client.channelPageCalls, 2);
   assert.equal(client.manifestCalls, 2);
   assert.equal(service.getStatus().metrics.resolutionRefreshes, 1);
+});
+
+test('uses an FFmpeg-compatible suffix for proxied HLS resources', () => {
+  const service = new EmbedTvService({ client: new FakeClient() });
+  const url = service.buildProxyUrl(
+    'http://bridge:9699',
+    'espn',
+    'https://cdn.example/live/segment.png',
+  );
+  assert.match(url, /\/channel\/espn\/hls\.ts\?u=/);
+  assert.equal(decodeProxyTarget(new URL(url).searchParams.get('u')), 'https://cdn.example/live/segment.png');
+});
+
+test('proxies direct HLS resources with extensions that FFmpeg rejects', async () => {
+  const client = new FakeClient();
+  client.fetchStream = async () => ({
+    status: 206,
+    headers: new Headers({ 'content-type': 'text/css' }),
+    body: { cancel: async () => {} },
+  });
+  const service = new EmbedTvService({ client });
+  const resolution = { headers: { 'User-Agent': client.userAgent } };
+
+  assert.equal(
+    await service.chooseManifestMode(['https://cdn.example/assets/segment.css'], resolution),
+    'proxy',
+  );
+  assert.equal(
+    await service.chooseManifestMode(['https://cdn.example/assets/segment.ts'], resolution),
+    'direct',
+  );
 });
 
 for (const failureStatus of [403, 404]) {

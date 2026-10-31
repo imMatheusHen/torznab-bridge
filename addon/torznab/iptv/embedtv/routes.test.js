@@ -34,6 +34,8 @@ test('serves stable playlist/EPG routes and rejects malformed channel/proxy targ
     assert.equal(invalid.status, 400);
     const proxy = await fetch(`http://127.0.0.1:${port}/iptv/embedtv/channel/espn/hls?u=not-base64`);
     assert.equal(proxy.status, 403);
+    const ffmpegCompatibleProxy = await fetch(`http://127.0.0.1:${port}/iptv/embedtv/channel/espn/hls.ts?u=not-base64`);
+    assert.equal(ffmpegCompatibleProxy.status, 403);
   } finally {
     await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }

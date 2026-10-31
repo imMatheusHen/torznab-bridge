@@ -338,7 +338,10 @@ function parseReleaseRows(html, context = {}) {
       imdbId: node.attr('data-item-imdb-id') || undefined,
       imdbSeason: Number.isInteger(imdbSeason) ? imdbSeason : undefined,
       imdbEpisode,
-      canonicalTitle: node.closest('.item').find('.details > .title').first().text().trim() || context.query || undefined,
+      // A query is context, not source metadata. Do not let a request such as
+      // S02E01 replace the provider's torrent title when the indexed file is
+      // actually S02E10.
+      canonicalTitle: node.closest('.item').find('.details > .title').first().text().trim() || undefined,
       magnetUrl,
     });
   });

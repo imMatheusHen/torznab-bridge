@@ -48,7 +48,7 @@ function escapeText(value) {
 export function buildXmltv({ channels = [], programs = [] } = {}) {
   const lines = [
     '<?xml version="1.0" encoding="UTF-8"?>',
-    '<tv generator-info-name="Torznab Bridge EmbedTV" generator-info-url="https://embedtv.lat">',
+    '<tv generator-info-name="Torznab Bridge EmbedTV" generator-info-url="https://embedtv.cc">',
   ];
   for (const channel of channels) {
     lines.push(`  <channel id="${escapeXml(channel.id)}">`);
