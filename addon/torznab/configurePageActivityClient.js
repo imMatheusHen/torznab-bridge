@@ -27,7 +27,7 @@ export const CONFIGURE_PAGE_ACTIVITY_CLIENT_SCRIPT = `  <script>
       if (note) note.textContent = activity.demoData === true
         ? 'Valores sintéticos para demonstração; podem incluir consultas reais anteriores.'
         : activity.totalSearchCount
-          ? 'Consultas recebidas desde a inicialização desta instância.'
+          ? 'Histórico agregado de consultas desta instância.'
           : 'Nenhuma consulta registrada desde a inicialização desta instância.';
       if (!grid) return;
       if (!days.length) {
@@ -56,7 +56,11 @@ export const CONFIGURE_PAGE_ACTIVITY_CLIENT_SCRIPT = `  <script>
         tooltip.hidden = true;
         delete tooltip.dataset.visible;
       }
-      grid.innerHTML = completeDays.map(renderActivityDay).join('');
+      const maximumCount = completeDays.reduce(
+        (maximum, day) => Math.max(maximum, Math.max(0, Number(day.count) || 0)),
+        0,
+      );
+      grid.innerHTML = completeDays.map(day => renderActivityDay(day, maximumCount)).join('');
       grid.setAttribute(
         'aria-label',
         'Atividade nos últimos 120 dias, com hoje na última célula. '
@@ -66,14 +70,14 @@ export const CONFIGURE_PAGE_ACTIVITY_CLIENT_SCRIPT = `  <script>
       bindActivityTooltip(grid, chart, tooltip);
     };
 
-    function renderActivityDay(day) {
+    function renderActivityDay(day, maximumCount) {
       const count = Math.max(0, Number(day.count) || 0);
       const observed = day.observed !== false;
       const dateLabel = formatActivityDayLabel(day.date);
       const label = observed
         ? dateLabel + ' · ' + count + ' consultas'
         : dateLabel + ' · Sem histórico';
-      const level = getActivityLevel(count);
+      const level = getActivityLevel(count, maximumCount);
       return '<span class="activity-day" role="gridcell" tabindex="0" data-date="'
         + escapeActivityHtml(day.date)
         + '" data-count="' + count
@@ -156,11 +160,18 @@ export const CONFIGURE_PAGE_ACTIVITY_CLIENT_SCRIPT = `  <script>
       });
     }
 
-    function getActivityLevel(count) {
+    function getActivityLevel(count, maximumCount) {
       if (count <= 0) return 0;
-      if (count === 1) return 1;
-      if (count <= 3) return 2;
-      if (count <= 7) return 3;
+      if (maximumCount <= 7) {
+        if (count === 1) return 1;
+        if (count <= 3) return 2;
+        if (count <= 7) return 3;
+        return 4;
+      }
+      const relativeCount = count / maximumCount;
+      if (relativeCount <= 0.25) return 1;
+      if (relativeCount <= 0.45) return 2;
+      if (relativeCount <= 0.7) return 3;
       return 4;
     }
 

@@ -51,8 +51,8 @@ ou recriações do container.
 
 ## Capturas de tela
 
-As capturas usam valores sintéticos de atividade, identificados na própria tela,
-para demonstrar a visualização dos últimos 120 dias.
+As capturas usam valores sintéticos de atividade para demonstrar a visualização
+dos últimos 120 dias; esses números não representam consultas reais.
 
 ![Visão geral do Torznab Bridge](docs/screenshots/torznab-overview.png)
 

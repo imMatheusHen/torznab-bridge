@@ -1,5 +1,11 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import test from 'node:test';
+import { buildSampleSearchEvents } from './sampleSearchEvents.js';
+
+const addonDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 import { buildSearchActivitySnapshot, recordSearchActivity } from './searchActivity.js';
 import {
   buildStatusSnapshot,
@@ -137,4 +143,39 @@ test('keeps source averages unknown until valid samples and excludes failed resu
   assert.equal(metrics.averageResults, 1);
   assert.equal(metrics.durationSampleCount, 4);
   assert.equal(metrics.averageDurationMs, 1500);
+});
+
+
+test('builds 30 chronological sample search events without fake magnets', () => {
+  const now = Date.parse('2026-11-01T12:00:00.000Z');
+  const events = buildSampleSearchEvents(now);
+
+  assert.equal(events.length, 30);
+  assert.ok(events.every(event => event.kind === 'search'));
+  assert.ok(events.every(event => event.requester.label && event.search.sourceBreakdown.length));
+  assert.ok(events.every((event, index) => index === 0
+    || Date.parse(events[index - 1].timestamp) > Date.parse(event.timestamp)));
+  assert.ok(events.every(event => event.releases.every(release => !release.magnetUrl)));
+});
+
+
+test('seeds sample events only when the opt-in environment flag is enabled', () => {
+  const source = [
+    "import { buildStatusSnapshot } from './torznab/monitor.js';",
+    'const status = buildStatusSnapshot([]);',
+    'console.log(JSON.stringify({ events: status.events.length, activity: status.activity.totalSearchCount }));',
+  ].join('\n');
+  const environment = { ...process.env };
+  delete environment.TORZNAB_SAMPLE_EVENTS;
+  const readSnapshot = env => JSON.parse(execFileSync(
+    process.execPath,
+    ['--input-type=module', '-e', source],
+    { cwd: addonDirectory, env, encoding: 'utf8' },
+  ));
+
+  assert.deepEqual(readSnapshot(environment), { events: 0, activity: 0 });
+  assert.deepEqual(readSnapshot({ ...environment, TORZNAB_SAMPLE_EVENTS: '1' }), {
+    events: 30,
+    activity: 0,
+  });
 });
