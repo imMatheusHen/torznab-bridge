@@ -2,6 +2,7 @@ import { SOURCE_OPTIONS } from './source.js';
 import { buildMagnetUrl } from './release.js';
 import { buildSearchActivitySnapshot, recordSearchActivity } from './searchActivity.js';
 import { buildSearchDetails, buildSearchLabel, normalizeImdbId, normalizeSearchYear } from './searchMetadata.js';
+import { buildSampleSearchEvents } from './sampleSearchEvents.js';
 
 const EVENT_LIMIT = 30;
 const EVENT_RELEASE_LIMIT = 100;
@@ -11,7 +12,9 @@ const SOURCE_METRIC_DAY_LIMIT = 120;
 const METRIC_TIME_ZONE = 'America/Sao_Paulo';
 const sourceCatalog = new Map(SOURCE_OPTIONS.map(source => [source.key, source]));
 const sourceState = new Map(SOURCE_OPTIONS.map(source => [source.key, createInitialState(source)]));
-const recentEvents = [];
+const recentEvents = process.env.TORZNAB_SAMPLE_EVENTS === '1'
+  ? buildSampleSearchEvents()
+  : [];
 const metricDayFormatter = new Intl.DateTimeFormat('en-CA', {
   timeZone: METRIC_TIME_ZONE,
   year: 'numeric',
