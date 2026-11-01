@@ -11,6 +11,7 @@ export const CONFIGURE_PAGE_ACTIVITY_CLIENT_SCRIPT = `  <script>
       const failures = document.getElementById('stat-search-failures');
       const period = document.getElementById('activity-period');
       const note = document.getElementById('activity-history-note');
+      const demoBadge = document.getElementById('activity-demo-badge');
       const grid = document.getElementById('search-activity-days');
       const months = document.getElementById('search-activity-months');
       const chart = document.querySelector('.activity-chart');
@@ -19,12 +20,15 @@ export const CONFIGURE_PAGE_ACTIVITY_CLIENT_SCRIPT = `  <script>
       if (today) today.textContent = String(activity.todayCount ?? 0);
       if (total) total.textContent = String(activity.totalSearchCount ?? 0);
       if (failures) failures.textContent = String(activity.failedSearchCount ?? 0);
+      if (demoBadge) demoBadge.hidden = activity.demoData !== true;
       if (period) period.textContent = activity.historyStartedAt
         ? 'Desde ' + formatActivityDate(activity.historyStartedAt, activity.timeZone)
         : 'Histórico da instância atual';
-      if (note) note.textContent = activity.totalSearchCount
-        ? 'Consultas recebidas desde a inicialização desta instância.'
-        : 'Nenhuma consulta registrada desde a inicialização desta instância.';
+      if (note) note.textContent = activity.demoData === true
+        ? 'Valores sintéticos para demonstração; podem incluir consultas reais anteriores.'
+        : activity.totalSearchCount
+          ? 'Consultas recebidas desde a inicialização desta instância.'
+          : 'Nenhuma consulta registrada desde a inicialização desta instância.';
       if (!grid) return;
       if (!days.length) {
         grid.innerHTML = '';

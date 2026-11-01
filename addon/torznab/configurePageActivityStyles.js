@@ -9,6 +9,8 @@ export const CONFIGURE_PAGE_ACTIVITY_STYLES = `<style>
     .activity-heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 10px; }
     .activity-heading h2 { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; font-size: .9rem; font-weight: 630; }
     .activity-heading h2 span { color: var(--muted); font-size: .71rem; font-weight: 500; }
+    .activity-heading h2 .activity-demo-badge { padding: 3px 7px; border: 1px solid rgba(245, 190, 91, .32); border-radius: 999px; color: #f3c66f; background: rgba(245, 190, 91, .09); font-size: .61rem; font-weight: 600; }
+    .activity-heading h2 .activity-demo-badge[hidden] { display: none; }
     .activity-heading p { margin-top: 3px; color: var(--subtle); font-size: .7rem; }
     .activity-totals { display: flex; flex-wrap: wrap; gap: 14px; color: var(--muted); font-size: .72rem; }
     .activity-totals strong { margin-right: 3px; color: var(--text); font-family: var(--font-mono); font-weight: 620; font-variant-numeric: tabular-nums; }

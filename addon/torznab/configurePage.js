@@ -218,7 +218,7 @@ function renderHero(saved) {
       <section class="search-activity" aria-label="Atividade de consultas">
         <div class="activity-heading">
           <div>
-            <h2>Atividade de consultas <span>120 dias</span></h2>
+            <h2>Atividade de consultas <span>120 dias</span><span id="activity-demo-badge" class="activity-demo-badge" hidden>Dados de demonstração</span></h2>
             <p id="activity-period">Histórico desde a inicialização desta instância</p>
           </div>
           <div class="activity-totals">
