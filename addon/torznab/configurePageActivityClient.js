@@ -27,7 +27,7 @@ export const CONFIGURE_PAGE_ACTIVITY_CLIENT_SCRIPT = `  <script>
       if (note) note.textContent = activity.demoData === true
         ? 'Valores sintéticos para demonstração; podem incluir consultas reais anteriores.'
         : activity.totalSearchCount
-          ? 'Consultas recebidas desde a inicialização desta instância.'
+          ? 'Histórico agregado de consultas desta instância.'
           : 'Nenhuma consulta registrada desde a inicialização desta instância.';
       if (!grid) return;
       if (!days.length) {
