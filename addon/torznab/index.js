@@ -58,6 +58,7 @@ import {
 } from './monitor.js';
 import { renderConfigurePage } from './configurePage.js';
 import { getDefaultRuntimeConfiguration, getRuntimeConfigPath, saveRuntimeConfig } from './runtimeConfig.js';
+import { flushSearchActivity, initializeSearchActivity } from './searchActivity.js';
 import { createEmbedTvRouter, createEmbedTvService } from './iptv/embedtv/index.js';
 
 const PORT = parseInt(process.env.PORT || process.env.TORZNAB_PORT || '9699', 10);
@@ -73,6 +74,8 @@ let lastSourceHealthProbeAt = 0;
 let lastSourceHealthProbeKey = '';
 const deliveredReleaseCache = new Map();
 const embedTvService = createEmbedTvService();
+
+await initializeSearchActivity();
 
 const app = express();
 app.disable('x-powered-by');
@@ -279,6 +282,7 @@ async function handleStatusRequest(req, res) {
 
 async function shutdown() {
   server.close(async () => {
+    await flushSearchActivity().catch(error => console.error('Failed flushing search activity', error));
     await closePool().catch(error => console.error('Failed closing pool', error));
     process.exit(0);
   });

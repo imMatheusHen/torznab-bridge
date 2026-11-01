@@ -45,7 +45,18 @@ docker compose up -d torznab-bridge
 
 Isso baixa a imagem publicada mais recente e recria somente o serviço
 `torznab-bridge`. A configuração persistente em `/config` continua no volume
-montado pela stack.
+montado pela stack. O histórico agregado de consultas dos últimos 120 dias
+também é salvo em `/config/search-activity.json` e permanece após atualizações
+ou recriações do container.
+
+## Capturas de tela
+
+As capturas usam valores sintéticos de atividade, identificados na própria tela,
+para demonstrar a visualização dos últimos 120 dias.
+
+![Visão geral do Torznab Bridge](docs/screenshots/torznab-overview.png)
+
+![Detalhe da atividade de consultas](docs/screenshots/torznab-search-activity.png)
 
 ## Configuração inicial
 
