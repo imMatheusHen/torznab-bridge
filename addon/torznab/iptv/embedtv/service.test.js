@@ -108,6 +108,35 @@ test('uses an FFmpeg-compatible suffix for proxied HLS resources', () => {
   assert.equal(decodeProxyTarget(new URL(url).searchParams.get('u')), 'https://cdn.example/live/segment.png');
 });
 
+test('forwards valid byte ranges and the abort signal to proxied media', async () => {
+  const client = new FakeClient();
+  let requestOptions;
+  client.fetchStream = async (_url, options) => {
+    requestOptions = options;
+    return new Response(new Uint8Array([0x47, 0x00, 0x01]), {
+      status: 206,
+      headers: {
+        'content-type': 'video/mp2t',
+        'content-range': 'bytes 0-2/188',
+        'accept-ranges': 'bytes',
+      },
+    });
+  };
+  const service = new EmbedTvService({ client });
+  service.proxyOrigins.set('espn', { origins: new Set(['https://cdn.example']), updatedAt: 0 });
+  const controller = new AbortController();
+
+  const result = await service.openProxyResource('espn', 'https://cdn.example/segment.css', {
+    range: 'bytes=0-2',
+    signal: controller.signal,
+  });
+
+  assert.equal(requestOptions.headers.Range, 'bytes=0-2');
+  assert.equal(requestOptions.signal, controller.signal);
+  assert.equal(result.response.status, 206);
+  await result.response.body.cancel();
+});
+
 test('proxies direct HLS resources with extensions that FFmpeg rejects', async () => {
   const client = new FakeClient();
   client.fetchStream = async () => ({

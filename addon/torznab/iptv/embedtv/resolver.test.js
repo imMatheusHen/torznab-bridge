@@ -25,6 +25,15 @@ test('extracts current startPlayer, data-stream, txt and m3u8 forms without fixe
   assert.equal(selectStreamCandidate(candidates).url, 'https://cdn.example/live.m3u8?token=abc');
 });
 
+test('extracts a public static HLS URL with JavaScript-escaped slashes', () => {
+  const html = String.raw`<script>var src = "https:\/\/cdn.example\/live\/hbo.txt?key=a\u0026variant=720";</script>`;
+  const candidates = extractStreamCandidates(html, { pageUrl: 'https://embedtv.cc/hbo' });
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0].url, 'https://cdn.example/live/hbo.txt?key=a&variant=720');
+  assert.equal(candidates[0].kind, 'txt');
+  assert.equal(candidates[0].fallback, true);
+});
+
 test('recognizes HLS manifests delivered with text/plain and unwraps JSON/text pointers', () => {
   assert.equal(isHlsBody('#EXTM3U\n#EXTINF:6,\nseg.ts', 'text/plain'), true);
   assert.equal(extractNestedManifestUrl('{"url":"https://cdn.example/master.m3u8"}', 'https://cdn.example/live.txt'), 'https://cdn.example/master.m3u8');
