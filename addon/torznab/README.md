@@ -18,6 +18,7 @@ Este diretório contém o runtime atual do Torznab Bridge.
 - `TORZNAB_IPTV_ENABLED=0` para desabilitar o EmbedTV por padrão
 - `TORZNAB_EMBEDTV_BASE_URL` para apontar a uma origem compatível em testes
 - `TORZNAB_EMBEDTV_HLS_PROXY=1` para forçar o proxy de manifesto/segmentos HLS
+- `TORZNAB_EMBEDTV_KEEPALIVE_TIMEOUT_MS` controla o tempo ocioso do pool upstream; padrão 30 s, limitado a 120 s
 - `DATABASE_URI`
 
 ## Endpoints úteis
@@ -37,8 +38,11 @@ A seção `IPTV / EmbedTV` da configuração permite habilitar ou desabilitar o
 módulo. Para usar em um player IPTV, informe a playlist
 `http://IP_DO_SERVIDOR:9699/iptv/embedtv/playlist.m3u` e o EPG
 `http://IP_DO_SERVIDOR:9699/iptv/embedtv/epg.xml`. O bridge resolve as páginas
-dinâmicas e os manifestos HLS sem transcodificar vídeo; quando o CDN aceita
-acesso direto, os segmentos permanecem fora do servidor.
+dinâmicas e os manifestos HLS sem transcodificar vídeo. Ele usa acesso direto
+quando a origem e o player aceitam os recursos; caso precise adaptar a extensão
+para clientes FFmpeg, transmite os segmentos com backpressure, repassa respostas
+`206`/`Content-Range` para pedidos `Range` e encerra a origem quando o player
+cancela a reprodução.
 
 ## Observação
 

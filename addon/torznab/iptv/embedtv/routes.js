@@ -101,20 +101,27 @@ export function createEmbedTvRouter({
       sendError(res, new EmbedTvError('Destino HLS inválido', { statusCode: 400, code: 'invalid_proxy_target' }));
       return;
     }
+    const upstreamController = new AbortController();
+    req.once('aborted', () => upstreamController.abort());
+    res.once('close', () => {
+      if (!res.writableFinished) upstreamController.abort();
+    });
     try {
-      const result = await service.openProxyResource(channelId, target);
+      const result = await service.openProxyResource(channelId, target, {
+        range: req.get('range'),
+        signal: upstreamController.signal,
+      });
+      if (res.destroyed) return;
       if (result.kind === 'manifest') {
         res.set('Cache-Control', 'no-store');
         res.type('application/vnd.apple.mpegurl').send(result.text);
         return;
       }
+      res.status(result.response.status);
       copyStreamHeaders(result.response, res);
-      req.on('close', () => {
-        const cancel = result.response.body?.cancel?.();
-        if (cancel) cancel.catch(() => {});
-      });
-      streamToResponse(result.response, res);
+      await streamToResponse(result.response, res);
     } catch (error) {
+      if (res.destroyed || error?.name === 'AbortError' || error?.code === 'ABORT_ERR') return;
       sendError(res, error);
     }
   };
@@ -143,7 +150,7 @@ function normalizeBaseUrl(value) {
 }
 
 function copyStreamHeaders(upstream, res) {
-  for (const name of ['content-type', 'content-length', 'cache-control', 'etag', 'last-modified', 'accept-ranges']) {
+  for (const name of ['content-type', 'content-length', 'content-range', 'cache-control', 'etag', 'last-modified', 'accept-ranges']) {
     const value = upstream.headers.get(name);
     if (value) res.set(name, value);
   }

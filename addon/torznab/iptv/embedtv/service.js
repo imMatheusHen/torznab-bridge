@@ -197,18 +197,23 @@ export class EmbedTvService {
     throw lastError || new EmbedTvError('Não foi possível resolver o manifesto HLS', { code: 'manifest_failed' });
   }
 
-  async openProxyResource(channelId, targetUrl) {
+  async openProxyResource(channelId, targetUrl, { range, signal } = {}) {
     if (!this.isAllowedProxyTarget(channelId, targetUrl)) {
       throw new EmbedTvError('Destino HLS não autorizado', { statusCode: 403, code: 'proxy_target_denied' });
     }
     this.metrics.proxyRequests += 1;
     const resolution = await this.resolveChannel(channelId);
+    const headers = { ...resolution.headers };
+    const forwardRange = isForwardableRange(range) && !isManifestResourceUrl(targetUrl);
+    if (forwardRange) headers.Range = range;
     const response = await this.client.fetchStream(targetUrl, {
       retry: false,
       stage: 'resource',
-      headers: resolution.headers,
+      signal,
+      headers,
+      allowedHttpErrorStatuses: forwardRange ? [416] : [],
     });
-    if (!response.ok) {
+    if (!response.ok && response.status !== 416) {
       const cancel = response.body?.cancel?.();
       if (cancel) await cancel.catch(() => {});
       if (isResolutionRefreshStatus(response.status)) {
@@ -402,6 +407,12 @@ export class EmbedTvService {
     this.recentFailures.splice(8);
     console.warn(`[EmbedTV] channel=${context.split(':')[1] || '-'} stage=${diagnostic.stage || context} hostname=${diagnostic.hostname || '-'} status=${status || '-'} redirect=${diagnostic.redirected ? 'true' : 'false'} content-type=${diagnostic.contentType || '-'} referer-host=${diagnostic.refererHost || '-'} cookie-present=${diagnostic.cookiePresent ? 'true' : 'false'}`);
   }
+}
+
+function isForwardableRange(value) {
+  return typeof value === 'string'
+    && value.length <= 128
+    && /^bytes=(?:(?:\d+-\d*)|(?:-\d+))(?:,(?:(?:\d+-\d*)|(?:-\d+)))*$/i.test(value);
 }
 
 function isManifestResourceUrl(value) {

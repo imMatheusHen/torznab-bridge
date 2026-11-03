@@ -1,4 +1,5 @@
 import { isIP } from 'node:net';
+import { Agent } from 'undici';
 
 import {
   EMBEDTV_API_PATHS,
@@ -6,6 +7,18 @@ import {
   getEmbedTvBaseUrl,
   getEmbedTvUserAgent,
 } from './constants.js';
+
+const configuredKeepAliveTimeoutMs = Number.parseInt(process.env.TORZNAB_EMBEDTV_KEEPALIVE_TIMEOUT_MS || '', 10);
+const keepAliveTimeoutMs = Number.isFinite(configuredKeepAliveTimeoutMs) && configuredKeepAliveTimeoutMs > 0
+  ? Math.min(configuredKeepAliveTimeoutMs, 120_000)
+  : 30_000;
+
+export const EMBEDTV_UPSTREAM_DISPATCHER = new Agent({
+  connections: 4,
+  keepAliveTimeout: keepAliveTimeoutMs,
+  keepAliveMaxTimeout: keepAliveTimeoutMs,
+  pipelining: 1,
+});
 
 export class EmbedTvError extends Error {
   constructor(message, {
@@ -49,6 +62,7 @@ export class EmbedTvClient {
     retryAttempts = parseInt(process.env.TORZNAB_EMBEDTV_RETRY_MAX_ATTEMPTS || '2', 10),
     retryBaseDelayMs = parseInt(process.env.TORZNAB_EMBEDTV_RETRY_BASE_DELAY_MS || '250', 10),
     userAgent = getEmbedTvUserAgent() || EMBEDTV_DEFAULT_USER_AGENT,
+    dispatcher,
   } = {}) {
     if (typeof fetchFn !== 'function') {
       throw new TypeError('EmbedTV client requires a fetch implementation');
@@ -59,6 +73,7 @@ export class EmbedTvClient {
     this.retryAttempts = Math.max(1, retryAttempts);
     this.retryBaseDelayMs = Math.max(0, retryBaseDelayMs);
     this.userAgent = userAgent;
+    this.dispatcher = dispatcher ?? (fetchFn === globalThis.fetch ? EMBEDTV_UPSTREAM_DISPATCHER : undefined);
   }
 
   async fetchJson(path, options = {}) {
@@ -141,13 +156,21 @@ export class EmbedTvClient {
     });
   }
 
-  async request(url, { method = 'GET', headers = {}, retry = true, signal, stage = 'request', ...options } = {}) {
+  async request(url, {
+    method = 'GET',
+    headers = {},
+    retry = true,
+    signal,
+    stage = 'request',
+    allowedHttpErrorStatuses = [],
+    ...options
+  } = {}) {
     const attempts = retry ? this.retryAttempts : 1;
     let lastError;
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       try {
         const response = await this.fetchWithTimeout(url, { method, headers, signal, ...options });
-        if (!response.ok) {
+        if (!response.ok && !allowedHttpErrorStatuses.includes(response.status)) {
           const error = new EmbedTvError(`EmbedTV upstream respondeu HTTP ${response.status}`, {
             statusCode: response.status,
             code: `http_${response.status}`,
@@ -195,15 +218,19 @@ export class EmbedTvClient {
   }
 
   async fetchWithTimeout(url, options) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
-    const abortFromCaller = () => controller.abort();
-    options.signal?.addEventListener('abort', abortFromCaller, { once: true });
+    const timeoutController = new AbortController();
+    const timeoutId = setTimeout(() => timeoutController.abort(), this.timeoutMs);
+    const signal = options.signal
+      ? AbortSignal.any([options.signal, timeoutController.signal])
+      : timeoutController.signal;
     try {
-      return await this.fetchFn(url, { ...options, signal: controller.signal });
+      return await this.fetchFn(url, {
+        ...options,
+        ...(this.dispatcher ? { dispatcher: this.dispatcher } : {}),
+        signal,
+      });
     } finally {
       clearTimeout(timeoutId);
-      options.signal?.removeEventListener('abort', abortFromCaller);
     }
   }
 }
