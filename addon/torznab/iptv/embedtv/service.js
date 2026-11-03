@@ -204,12 +204,14 @@ export class EmbedTvService {
     this.metrics.proxyRequests += 1;
     const resolution = await this.resolveChannel(channelId);
     const headers = { ...resolution.headers };
-    if (isForwardableRange(range) && !isManifestResourceUrl(targetUrl)) headers.Range = range;
+    const forwardRange = isForwardableRange(range) && !isManifestResourceUrl(targetUrl);
+    if (forwardRange) headers.Range = range;
     const response = await this.client.fetchStream(targetUrl, {
       retry: false,
       stage: 'resource',
       signal,
       headers,
+      allowedHttpErrorStatuses: forwardRange ? [416] : [],
     });
     if (!response.ok && response.status !== 416) {
       const cancel = response.body?.cancel?.();

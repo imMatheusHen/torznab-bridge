@@ -156,13 +156,21 @@ export class EmbedTvClient {
     });
   }
 
-  async request(url, { method = 'GET', headers = {}, retry = true, signal, stage = 'request', ...options } = {}) {
+  async request(url, {
+    method = 'GET',
+    headers = {},
+    retry = true,
+    signal,
+    stage = 'request',
+    allowedHttpErrorStatuses = [],
+    ...options
+  } = {}) {
     const attempts = retry ? this.retryAttempts : 1;
     let lastError;
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       try {
         const response = await this.fetchWithTimeout(url, { method, headers, signal, ...options });
-        if (!response.ok) {
+        if (!response.ok && !allowedHttpErrorStatuses.includes(response.status)) {
           const error = new EmbedTvError(`EmbedTV upstream respondeu HTTP ${response.status}`, {
             statusCode: response.status,
             code: `http_${response.status}`,
