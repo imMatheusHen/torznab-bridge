@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import express from 'express';
 import http from 'node:http';
 import test from 'node:test';
+import { EmbedTvClient } from './client.js';
 import { createEmbedTvRouter } from './routes.js';
 import { encodeProxyTarget } from './hls.js';
+import { EmbedTvService } from './service.js';
 
 test('serves stable playlist/EPG routes and rejects malformed channel/proxy targets', async () => {
   const service = {
@@ -80,6 +82,57 @@ test('preserves upstream partial-content status and forwards bounded Range reque
     assert.equal(proxyOptions.signal.aborted, false);
   } finally {
     await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
+
+test('forwards an upstream 416 and Content-Range through the real client', async () => {
+  let upstreamRange;
+  const upstream = http.createServer((request, response) => {
+    upstreamRange = request.headers.range;
+    response.writeHead(416, { 'content-range': 'bytes */188' });
+    response.end();
+  });
+  await new Promise((resolve, reject) => {
+    upstream.once('error', reject);
+    upstream.listen(0, '127.0.0.1', resolve);
+  });
+  const upstreamBase = `http://127.0.0.1:${upstream.address().port}`;
+  const client = new EmbedTvClient({
+    timeoutMs: 2_000,
+    retryAttempts: 1,
+    fetchFn: (url, options) => globalThis.fetch(`${upstreamBase}${new URL(url).pathname}`, options),
+  });
+  const service = new EmbedTvService({ client });
+  service.resolveChannel = async () => ({ headers: {} });
+  service.proxyOrigins.set('espn', {
+    origins: new Set(['https://cdn.example']),
+    updatedAt: Date.now(),
+  });
+  const app = express();
+  app.use('/iptv/embedtv', createEmbedTvRouter({ service, isEnabled: () => true }));
+  const server = await new Promise(resolve => {
+    const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
+  });
+  const port = server.address().port;
+  const target = encodeProxyTarget('https://cdn.example/segment.css');
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/iptv/embedtv/channel/espn/hls.ts?u=${target}`, {
+      headers: { Range: 'bytes=188-' },
+    });
+    assert.equal(upstreamRange, 'bytes=188-');
+    assert.equal(response.status, 416);
+    assert.equal(response.headers.get('content-range'), 'bytes */188');
+    assert.equal(await response.text(), '');
+  } finally {
+    await new Promise(resolve => {
+      server.close(resolve);
+      server.closeAllConnections();
+    });
+    await new Promise(resolve => {
+      upstream.close(resolve);
+      upstream.closeAllConnections();
+    });
   }
 });
 
