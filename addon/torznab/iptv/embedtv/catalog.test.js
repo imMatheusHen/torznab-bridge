@@ -56,14 +56,18 @@ test('maps events only from explicit EmbedTV player channel paths', () => {
     players: [
       'https://dynamic.embedtv.cc/sportv',
       'https://dynamic.embedtv.lat/sportv',
+      'https://channel.ebtv.lat/sportv',
       'https://unknown.example/sportv',
+      'https://embedtv.cc.attacker.example/sportv',
     ],
   }]);
   const channels = [{ id: 'sportv', name: 'SporTV' }];
   const associated = associateEvents(events, channels);
   assert.equal(extractEmbedTvChannelId(events[0].players[0]), 'sportv');
   assert.equal(extractEmbedTvChannelId(events[0].players[1]), 'sportv');
-  assert.equal(extractEmbedTvChannelId(events[0].players[2]), undefined);
+  assert.equal(extractEmbedTvChannelId(events[0].players[2]), 'sportv');
+  assert.equal(extractEmbedTvChannelId(events[0].players[3]), undefined);
+  assert.equal(extractEmbedTvChannelId(events[0].players[4]), undefined);
   assert.equal(associated.entries.length, 1);
   assert.equal(associated.entries[0].channel.id, 'sportv');
   assert.equal(associated.unmapped.length, 0);

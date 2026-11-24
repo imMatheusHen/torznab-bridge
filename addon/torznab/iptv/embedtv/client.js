@@ -256,7 +256,7 @@ export function isEmbedTvPageUrl(url, baseUrl = getEmbedTvBaseUrl()) {
       && !candidate.password
       && (
         isHostOrSubdomain(candidate.hostname, base.hostname)
-        || ['embedtv.cc', 'embedtv.lat'].some(host => isHostOrSubdomain(candidate.hostname, host))
+        || ['embedtv.cc', 'embedtv.lat', 'ebtv.lat'].some(host => isHostOrSubdomain(candidate.hostname, host))
       );
   } catch {
     return false;
