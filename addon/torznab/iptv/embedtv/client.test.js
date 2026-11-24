@@ -2,11 +2,21 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import test from 'node:test';
 import { EMBEDTV_UPSTREAM_DISPATCHER, EmbedTvClient, isEmbedTvPageUrl } from './client.js';
+import { EMBEDTV_BASE_URL } from './constants.js';
+
+test('uses embedtv.my as the canonical API base', () => {
+  assert.equal(EMBEDTV_BASE_URL, 'https://embedtv.my');
+});
 
 test('accepts current and legacy EmbedTV page hosts without accepting lookalikes', () => {
+  assert.equal(isEmbedTvPageUrl('https://random.embedtv.my/ae'), true);
+  assert.equal(isEmbedTvPageUrl('https://embedtv.my/ae'), true);
   assert.equal(isEmbedTvPageUrl('https://random.embedtv.cc/ae'), true);
   assert.equal(isEmbedTvPageUrl('https://embedtv.cc/ae'), true);
   assert.equal(isEmbedTvPageUrl('https://random.embedtv.lat/ae'), true);
+  assert.equal(isEmbedTvPageUrl('https://channel.ebtv.lat/ae'), true);
+  assert.equal(isEmbedTvPageUrl('https://embedtv.my.attacker.example/ae'), false);
+  assert.equal(isEmbedTvPageUrl('https://channel.ebtv.lat.attacker.example/ae'), false);
   assert.equal(isEmbedTvPageUrl('https://embedtv.cc.attacker.example/ae'), false);
   assert.equal(isEmbedTvPageUrl('http://random.embedtv.cc/ae'), false);
   assert.equal(isEmbedTvPageUrl('https://user@random.embedtv.cc/ae'), false);
